@@ -1,0 +1,141 @@
+import { Request, Response, NextFunction } from 'express';
+import { ScrapeJobModel } from '../models/ScrapeJob';
+import { runSource, SOURCES, SOURCE_IDS, getSource } from '../extraction';
+import type { RunOptions } from '../extraction';
+
+/**
+ * GET /api/extraction/sources — the registry, as data.
+ *
+ * Compliance is part of the response, not a footnote: an admin UI showing a
+ * "Run" button for eGP BMA2 without showing that its Terms of Service forbid
+ * crawling would be actively misleading.
+ */
+export function listSources(_req: Request, res: Response): void {
+  res.json(
+    SOURCE_IDS.map((id) => {
+      const source = SOURCES[id];
+      return {
+        id: source.id,
+        label: source.label,
+        labelEn: source.labelEn,
+        homepage: source.homepage,
+        listingUrl: source.listingUrl,
+        agency: source.agency,
+        stageSignal: source.stageSignal,
+        compliance: source.compliance,
+        defaults: source.defaults,
+        caveats: source.caveats,
+      };
+    })
+  );
+}
+
+/**
+ * POST /api/extraction/sources/:id/run — trigger a run.
+ *
+ * Runs synchronously today. A full DEPA pull with attachments takes minutes,
+ * so this is the first thing to move behind a queue when the admin UI lands —
+ * see the "Scheduling" section of docs/extraction-pipeline.md.
+ */
+export async function triggerRun(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const source = getSource(req.params.id);
+    const body = (req.body ?? {}) as Record<string, unknown>;
+
+    const options: RunOptions = {
+      trigger: 'api',
+      dryRun: body.dryRun === true,
+      withAttachments: body.withAttachments === true,
+      withDetail: body.withDetail !== false,
+      preAwardOnly: body.preAwardOnly === true,
+      keywords: Array.isArray(body.keywords) ? (body.keywords as string[]) : [],
+      maxPages: toPositiveInt(body.maxPages),
+      maxRecords: toPositiveInt(body.maxRecords),
+      budgetYearBe: toPositiveInt(body.budgetYearBe),
+      // Source-specific knobs (DGA category, MOC cid, BMA announce codes).
+      // Whitelisted to strings/numbers so a request body can't smuggle an
+      // object into an adapter's option lookup.
+      params: toParams(body.params),
+    };
+
+    // The ToS override is accepted over the API but never defaulted: both an
+    // approver and a reason must be supplied, and both are written to the job
+    // record so the decision stays attributable.
+    const override = body.overrideTosBlock as
+      | { approvedBy?: string; reason?: string }
+      | undefined;
+    if (override?.approvedBy && override?.reason) {
+      options.overrideTosBlock = {
+        approvedBy: String(override.approvedBy),
+        reason: String(override.reason),
+      };
+    }
+
+    if (source.compliance.tosStatus === 'prohibited' && !options.overrideTosBlock) {
+      res.status(409).json({
+        error: 'Source is blocked by its Terms of Service.',
+        detail: source.compliance.tosNote,
+        remedy:
+          'Supply overrideTosBlock: { approvedBy, reason } to proceed — after getting the ' +
+          "agency's sign-off.",
+      });
+      return;
+    }
+
+    const result = await runSource(source.id, options);
+    res.status(result.status === 'skipped' ? 409 : 200).json(result);
+  } catch (err) {
+    next(err);
+  }
+}
+
+/** GET /api/extraction/jobs — run history, newest first. */
+export async function listJobs(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const filter: Record<string, unknown> = {};
+    if (req.query.sourceId) filter.sourceId = String(req.query.sourceId);
+    if (req.query.status) filter.status = String(req.query.status);
+
+    const limit = Math.min(toPositiveInt(req.query.limit) ?? 50, 200);
+    const jobs = await ScrapeJobModel.find(filter).sort({ startedAt: -1 }).limit(limit);
+    res.json(jobs);
+  } catch (err) {
+    next(err);
+  }
+}
+
+/** GET /api/extraction/jobs/:id — one run, in full. */
+export async function getJob(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const job = await ScrapeJobModel.findById(req.params.id);
+    if (!job) {
+      res.status(404).json({ error: 'Scrape job not found' });
+      return;
+    }
+    res.json(job);
+  } catch (err) {
+    next(err);
+  }
+}
+
+function toPositiveInt(value: unknown): number | undefined {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+function toParams(value: unknown): Record<string, string | number> | undefined {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined;
+  const out: Record<string, string | number> = {};
+  for (const [key, raw] of Object.entries(value as Record<string, unknown>)) {
+    if (typeof raw === 'string' || typeof raw === 'number') out[key] = raw;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}

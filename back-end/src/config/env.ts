@@ -1,4 +1,5 @@
 import dotenv from 'dotenv';
+import { extractionConfig } from '../extraction/core/config';
 
 dotenv.config();
 
@@ -30,4 +31,10 @@ export const env = {
     vertexLocation: optional('VERTEX_AI_LOCATION', 'us-central1'),
     vertexModel: optional('VERTEX_AI_MODEL', 'gemini-2.0-flash'),
   },
+  /**
+   * Extraction pipeline settings. Defined in src/extraction/core/config.ts so
+   * the pipeline's dry-run mode can read them without importing this module,
+   * which requires MONGODB_URI.
+   */
+  extraction: extractionConfig,
 } as const;

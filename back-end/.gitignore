@@ -3,3 +3,8 @@ dist/
 .env
 *.log
 service-account.json
+
+# Attachments downloaded by the extraction pipeline
+# (EXTRACTION_STORAGE_DIR). These are public documents re-fetchable from
+# their sources, and a full pull is hundreds of MB of PDFs.
+storage/
