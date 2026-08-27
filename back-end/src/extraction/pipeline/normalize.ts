@@ -113,9 +113,12 @@ export function normalize(
   }
 
   const setOnInsert: Record<string, unknown> = {
-    // A freshly scraped TOR has not been looked at by a human yet. It must
-    // not appear as `published` on the strength of a keyword match.
-    status: 'pending_review',
+    // A freshly scraped TOR has only been discovered — it hasn't been
+    // through AI extraction yet (src/extraction/pipeline/aiExtraction.ts),
+    // let alone reviewed by a human. It must not appear as `pending_review`
+    // (implying extraction ran) or `published` on the strength of a keyword
+    // match alone.
+    status: 'discovered',
     'review.extractionStatus': 'pending',
     'source.discoveredAt': now,
     'sourceRef.firstSeenAt': now,

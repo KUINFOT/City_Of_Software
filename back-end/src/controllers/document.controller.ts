@@ -1,7 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { DocumentModel } from '../models/Document';
 import { extractText } from '../services/documentAI.service';
-import { summarize } from '../services/vertexAI.service';
+import { summarize } from '../services/gemini.service';
 
 /** POST /api/documents/upload — accept a file, run (stub) extraction, persist. */
 export async function uploadDocument(

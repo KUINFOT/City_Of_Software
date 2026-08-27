@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import { ScrapeJobModel } from '../models/ScrapeJob';
+import { ExtractionJobModel } from '../models/ExtractionJob';
 import { runSource, SOURCES, SOURCE_IDS, getSource } from '../extraction';
 import type { RunOptions } from '../extraction';
 
@@ -118,6 +119,40 @@ export async function getJob(req: Request, res: Response, next: NextFunction): P
     const job = await ScrapeJobModel.findById(req.params.id);
     if (!job) {
       res.status(404).json({ error: 'Scrape job not found' });
+      return;
+    }
+    res.json(job);
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * GET /api/extraction/ai-jobs — AI extraction run history, newest first.
+ * Mirrors listJobs/getJob's shape for ScrapeJob, but for ExtractionJob —
+ * gives visibility into parked/failed extractions (NFR-REL-03) without
+ * building a full pipeline-health view.
+ */
+export async function listAiJobs(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const filter: Record<string, unknown> = {};
+    if (req.query.torId) filter.torId = String(req.query.torId);
+    if (req.query.status) filter.status = String(req.query.status);
+
+    const limit = Math.min(toPositiveInt(req.query.limit) ?? 50, 200);
+    const jobs = await ExtractionJobModel.find(filter).sort({ startedAt: -1 }).limit(limit);
+    res.json(jobs);
+  } catch (err) {
+    next(err);
+  }
+}
+
+/** GET /api/extraction/ai-jobs/:id — one extraction attempt, in full. */
+export async function getAiJob(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const job = await ExtractionJobModel.findById(req.params.id);
+    if (!job) {
+      res.status(404).json({ error: 'Extraction job not found' });
       return;
     }
     res.json(job);

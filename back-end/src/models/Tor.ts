@@ -12,11 +12,38 @@ const torSchema = new Schema(
 
     title: { type: String, required: true },
     titleEn: String,
+    /**
+     * This platform's own review workflow state — the SRS's authoritative
+     * lifecycle (Section 9.3). Distinct from `lifecycle.stage` below, which
+     * tracks the AGENCY's procurement stage (draft TOR, bidding open,
+     * awarded...): a TOR can be `published` here (we've reviewed it) while
+     * its agency-side lifecycle stage is still `bidding_open`.
+     *
+     *   discovered   -> a candidate posting found, source document stored
+     *   extracting   -> an extraction job is in progress or queued
+     *   pending_review -> structured record exists, awaiting admin approval
+     *   published    -> visible to vendors and eligible for matching
+     *   rejected     -> not published, with a recorded reason (retained)
+     *   superseded   -> a confirmed duplicate, linked via `duplicateOf`
+     *   closed       -> submission deadline passed; still searchable
+     *   archived     -> retained for history/analytics, excluded from search
+     */
     status: {
       type: String,
-      enum: ['extracted', 'pending_review', 'published', 'closed', 'awarded', 'cancelled'],
-      default: 'pending_review',
+      enum: [
+        'discovered',
+        'extracting',
+        'pending_review',
+        'published',
+        'rejected',
+        'superseded',
+        'closed',
+        'archived',
+      ],
+      default: 'discovered',
     },
+    referenceNumber: String, // as printed in the source; not unique across agencies (FR-EXT-02/08)
+    description: String, // FR-EXT-02's extracted description, distinct from summaryAi.text (the generated summary)
     procurementMethod: {
       type: String,
       enum: ['e_bidding', 'selection', 'special_method', 'specific_method', 'other'],
@@ -26,10 +53,13 @@ const torSchema = new Schema(
       enum: ['web_application', 'mobile_application', 'it_system', 'other'],
     },
     technologies: [String],
+    keyRisks: [String],
+    estimatedComplexity: { type: String, enum: ['low', 'medium', 'high'] },
 
     budget: {
       amountThb: Number,
       isEstimated: { type: Boolean, default: true },
+      vatBasis: { type: String, enum: ['inclusive', 'exclusive', 'unstated'], default: 'unstated' },
     },
 
     timeline: {
@@ -41,6 +71,7 @@ const torSchema = new Schema(
       // index below serves.
       commentPeriodStart: Date,
       commentPeriodEnd: Date,
+      clarificationMeetingDate: Date,
       submissionDeadline: Date,
       projectDurationDays: Number,
       contractStartDate: Date,
@@ -128,6 +159,58 @@ const torSchema = new Schema(
       confidence: Number,
     },
 
+    /**
+     * AI-extraction outputs (FR-EXT-01/02/05/09/10, NFR-MNT-05). Distinct
+     * from `lifecycle`/`sourceRef` (scrape-derived) and from `review`
+     * (this platform's approval workflow) — this is what the extraction
+     * sweep (src/extraction/pipeline/aiExtraction.ts) actually produced.
+     */
+    extraction: {
+      overallConfidence: Number,
+      // Per-FIELD confidence, keyed by EXTRACTED_FIELD_KEYS (flat camelCase —
+      // Mongoose Map keys must not contain '.').
+      fieldConfidence: { type: Map, of: Number, default: {} },
+      modelVersion: String,
+      promptVersion: String,
+      ocrUsed: Boolean,
+      language: { type: String, enum: ['th', 'en', 'mixed'] },
+      // Field keys discarded for lacking grounding in the source (FR-EXT-09).
+      discardedFields: [String],
+      // Field keys an admin has hand-corrected (FR-ADM-04/NFR-DAT-06) — the
+      // extraction sweep must never overwrite these on re-extraction. Written
+      // defensively now even though no editor exists yet to populate it.
+      humanCorrectedFields: [String],
+      lastProcessedAt: Date,
+      lastDocumentId: { type: Schema.Types.ObjectId, ref: 'Document' },
+    },
+
+    /**
+     * Budget-outlier flag (FR-ANL-04-07). Tri-state like `lifecycle.isAwarded`
+     * above: `null` means "not evaluated / insufficient comparable data",
+     * a different fact from "confirmed not an outlier".
+     */
+    outlier: {
+      isOutlier: { type: Boolean, default: null },
+      reason: {
+        type: String,
+        enum: [
+          'no_budget',
+          'no_project_type',
+          'no_year',
+          'insufficient_comparables',
+          'within_range',
+          'outlier',
+        ],
+        default: null,
+      },
+      basisAgencyId: { type: Schema.Types.ObjectId, ref: 'Agency' },
+      basisProjectType: String,
+      basisYear: Number,
+      comparableCount: { type: Number, default: 0 },
+      deviationPct: Number,
+      evaluatedAt: Date,
+    },
+
     source: {
       sourceUrl: String,
       importMethod: { type: String, enum: ['scrape', 'manual'], default: 'scrape' },
@@ -146,8 +229,29 @@ const torSchema = new Schema(
       notes: String,
     },
 
+    // 'none' | 'suspected' (linked via mergeCandidateIds, awaiting admin
+    // resolution) | 'confirmed' (resolved to `duplicateOf`, this record
+    // superseded). See src/extraction/pipeline/duplicateCheck.ts.
+    duplicateStatus: { type: String, enum: ['none', 'suspected', 'confirmed'], default: 'none' },
+    // The record this one was superseded by, once duplicateStatus is 'confirmed'.
     duplicateOf: { type: Schema.Types.ObjectId, ref: 'Tor', default: null },
-    mergeCandidateIds: [{ type: Schema.Types.ObjectId, ref: 'Tor' }],
+    // Scored duplicate candidates (FR-EXT-08) — never auto-merged, only
+    // surfaced for admin review (NFR-DAT-05).
+    mergeCandidateIds: [
+      new Schema(
+        {
+          torId: { type: Schema.Types.ObjectId, ref: 'Tor' },
+          score: Number,
+          titleSimilarity: Number,
+          sameAgency: Boolean,
+          sameReferenceNumber: Boolean,
+          budgetProximity: Number,
+          dateProximityDays: Number,
+          detectedAt: Date,
+        },
+        { _id: false }
+      ),
+    ],
 
     stats: {
       viewCount: { type: Number, default: 0 },
@@ -176,6 +280,17 @@ torSchema.index({ 'lifecycle.stage': 1, 'lifecycle.isAwarded': 1 });
 torSchema.index({ 'timeline.commentPeriodEnd': 1, 'timeline.commentPeriodStart': 1 });
 // Per-source run monitoring and freshness checks.
 torSchema.index({ 'sourceRef.sourceId': 1, 'sourceRef.lastSeenAt': -1 });
+
+// Reference numbers aren't unique across agencies (Section 9.2), hence the
+// compound key rather than a bare unique index on referenceNumber alone.
+torSchema.index({ referenceNumber: 1, agencyId: 1 }, { sparse: true });
+// Duplicate pre-filter (budget+date proximity) and outlier year-bucketing.
+torSchema.index({ 'timeline.announcementDate': 1, agencyId: 1 });
+// Analytics dashboard's outlier list.
+torSchema.index({ 'outlier.isOutlier': 1 });
+// FR-ADM-01's review queue, oldest-first.
+torSchema.index({ status: 1, createdAt: 1 });
+torSchema.index({ duplicateStatus: 1 });
 
 export type TorDoc = InferSchemaType<typeof torSchema>;
 export const TorModel = model('Tor', torSchema);

@@ -72,19 +72,28 @@ One document per procurement notice (TOR).
   agency_name: "Bang Rak District Office",   // denormalized for list views
 
   title: String, title_en: String,
-  status: "extracted" | "pending_review" | "published" | "closed" | "awarded" | "cancelled",
+  // The SRS's approved TOR lifecycle (Section 9.3), adopted wholesale in
+  // place of an earlier, narrower enum — see "Extraction pipeline v2" below.
+  status: "discovered" | "extracting" | "pending_review" | "published" | "rejected" | "superseded" | "closed" | "archived",
+  reference_number: String,   // as printed in the source; not unique across agencies
+  description: String,        // extracted description — distinct from summary_ai.text (the generated summary)
   procurement_method: "e_bidding" | "selection" | "special_method" | "specific_method" | "other",
   project_type: "web_application" | "mobile_application" | "it_system" | "other",
   technologies: [String],     // e.g. ["React", "Node.js", "PostgreSQL"] — extracted tags, multikey-indexed
+  key_risks: [String],
+  estimated_complexity: "low" | "medium" | "high",
 
   budget: {
     amount_thb: Number,
-    is_estimated: Boolean
+    is_estimated: Boolean,
+    vat_basis: "inclusive" | "exclusive" | "unstated"
   },
 
   timeline: {
     announcement_date: ISODate,
+    comment_period_start: ISODate,   // public-comment window start, if applicable
     comment_period_end: ISODate,     // public-comment deadline, if applicable
+    clarification_meeting_date: ISODate,
     submission_deadline: ISODate,
     project_duration_days: Number,
     contract_start_date: ISODate,
@@ -110,6 +119,35 @@ One document per procurement notice (TOR).
     confidence: Number       // 0-1
   },
 
+  // AI-extraction outputs (distinct from lifecycle/source_ref, which are
+  // scrape-derived, and from review, which is the human decision).
+  extraction: {
+    overall_confidence: Number,          // [0,1] — drives review routing (FR-EXT-05)
+    field_confidence: Map<String, Number>, // per FIELD, flat keys, e.g. "budget" -> 0.42
+    model_version: String,
+    prompt_version: String,
+    ocr_used: Boolean,
+    language: "th" | "en" | "mixed",
+    discarded_fields: [String],          // dropped for lacking grounding in the source (FR-EXT-09)
+    human_corrected_fields: [String],    // never overwritten by re-extraction (NFR-DAT-06)
+    last_processed_at: ISODate,
+    last_document_id: ObjectId
+  },
+
+  // Budget-outlier flag (FR-ANL-04–07). Tri-state, same convention as
+  // lifecycle.is_awarded below: null = not evaluated / insufficient data,
+  // a different fact from "confirmed not an outlier."
+  outlier: {
+    is_outlier: Boolean,   // true | false | null
+    reason: "no_budget" | "no_project_type" | "no_year" | "insufficient_comparables" | "within_range" | "outlier",
+    basis_agency_id: ObjectId,
+    basis_project_type: String,
+    basis_year: Number,
+    comparable_count: Number,
+    deviation_pct: Number,
+    evaluated_at: ISODate
+  },
+
   source: {
     source_url: String,
     import_method: "scrape" | "manual",
@@ -124,8 +162,17 @@ One document per procurement notice (TOR).
     notes: String
   },
 
-  duplicate_of: ObjectId,          // ref tors, null unless merged
-  merge_candidate_ids: [ObjectId], // ref tors, admin dedup queue
+  // 'none' | 'suspected' (linked via merge_candidate_ids, awaiting admin
+  // resolution) | 'confirmed' (resolved to duplicate_of, this record superseded).
+  duplicate_status: "none" | "suspected" | "confirmed",
+  duplicate_of: ObjectId,          // ref tors — the record this one was superseded by
+  merge_candidate_ids: [            // scored duplicate candidates (FR-EXT-08) — never auto-merged
+    {
+      tor_id: ObjectId, score: Number, title_similarity: Number,
+      same_agency: Boolean, same_reference_number: Boolean,
+      budget_proximity: Number, date_proximity_days: Number, detected_at: ISODate
+    }
+  ],
 
   stats: { view_count: Number, bookmark_count: Number },
 
@@ -142,6 +189,13 @@ Indexes:
 - `{ "budget.amount_thb": 1 }`
 - `{ "timeline.submission_deadline": 1 }` — deadline calendar
 - `{ "review.extraction_status": 1 }` — admin review queue
+- `{ "sourceRef.identityKey": 1 }` unique sparse — the scrape pipeline's upsert key
+- `{ "lifecycle.stage": 1, "lifecycle.isAwarded": 1 }` — pre-award discovery
+- `{ reference_number: 1, agency_id: 1 }` sparse — reference numbers aren't unique across agencies
+- `{ "timeline.announcement_date": 1, agency_id: 1 }` — duplicate pre-filter and outlier year-bucketing
+- `{ "outlier.is_outlier": 1 }` — analytics dashboard's outlier list
+- `{ status: 1, created_at: 1 }` — FR-ADM-01's review queue, oldest-first
+- `{ duplicate_status: 1 }`
 
 ### `documents` (formerly planned as `tor_documents`)
 
@@ -161,11 +215,43 @@ Raw source files (PDF/scanned image) and their OCR text, kept separate from `tor
   agencyId: ObjectId,   // ref Agency
   uploadedBy: ObjectId, // ref User, null if from the scraper
 
+  origin: {              // provenance for pipeline-fetched files; null on user uploads
+    sourceUrl: String, label: String, storageKey: String, sha256: String,
+    downloadedAt: ISODate, insecureTransport: Boolean
+  },
+  extraction: {           // AI-extraction retry bookkeeping (NFR-REL-03)
+    attempts: Number, lastAttemptAt: ISODate, lastError: String
+  },
+
   createdAt: ISODate, updatedAt: ISODate
 }
 ```
 
-Indexes: `{ torId: 1 }`.
+Indexes: `{ torId: 1 }`, `{ "origin.sha256": 1 }` sparse, `{ "origin.storageKey": 1 }` sparse, `{ status: 1, createdAt: 1 }` (the AI-extraction sweep's work queue).
+
+### `extraction_jobs`
+
+One attempt to turn one source `document` into structured `tor` fields. Deliberately separate from `scrape_jobs` (which tracks a whole per-agency crawl run, not a single document's extraction) — a `document` can have more than one `extraction_job` (a retry, or a future re-extraction after a correction), and each carries the model/prompt version, per-field confidence, and cost that a published record needs to stay traceable (NFR-MNT-05, FR-EXT-10).
+
+```jsonc
+{
+  _id: ObjectId,
+  documentId: ObjectId, torId: ObjectId,
+  status: "running" | "success" | "partial" | "failed",
+  startedAt: ISODate, finishedAt: ISODate,
+  modelVersion: String, promptVersion: String,
+  ocrUsed: Boolean, language: "th" | "en" | "mixed",
+  overallConfidence: Number,
+  fieldConfidence: Map<String, Number>,
+  discardedFields: [{ field: String, reason: String }],
+  processingTimeMs: Number, estimatedCostThb: Number,
+  routedTo: "pending_review" | "published",
+  errors: [String],
+  createdAt: ISODate, updatedAt: ISODate
+}
+```
+
+Indexes: `{ documentId: 1, startedAt: -1 }`, `{ torId: 1, startedAt: -1 }`, `{ status: 1, startedAt: -1 }`.
 
 ### `users`
 
@@ -340,12 +426,14 @@ Index: `{ agency_id: 1, started_at: -1 }`.
 
 Mongoose models matching this design live in `back-end/src/models/`:
 
-- `Agency.ts`, `Tor.ts`, `User.ts`, `VendorProfile.ts`, `Bookmark.ts`, `Comparison.ts`, `Notification.ts`, `AuditLog.ts`, `ProcurementStat.ts`, `ScrapeJob.ts` — new
-- `Document.ts` — existing model, extended with `torId` / `agencyId` / `uploadedBy`
+- `Agency.ts`, `Tor.ts`, `User.ts`, `VendorProfile.ts`, `Bookmark.ts`, `Comparison.ts`, `Notification.ts`, `AuditLog.ts`, `ProcurementStat.ts`, `ScrapeJob.ts`, `ExtractionJob.ts` — new
+- `Document.ts` — existing model, extended with `torId` / `agencyId` / `uploadedBy` / `origin` / `extraction`
 
-The extraction pipeline that populates `tors`, `documents`, and `scrape_jobs` is documented separately in [extraction-pipeline.md](extraction-pipeline.md); it adds `tors.lifecycle`, `tors.sourceRef`, `tors.timeline.commentPeriodStart`, `documents.origin`, and several `scrape_jobs` fields to the design above.
+The extraction pipeline that populates `tors`, `documents`, `scrape_jobs`, and `extraction_jobs` is documented separately in [extraction-pipeline.md](extraction-pipeline.md), which now also covers the review workflow, AI-extraction wiring, scheduling, cross-record duplicate detection, and budget-outlier analytics — see its "Review, OCR, scheduling, duplicates & outliers" section.
 
-Not yet wired up: routes/controllers for the remaining collections (only `documents` and `extraction` have an API today, via `src/routes/document.routes.ts` and `src/routes/extraction.routes.ts`), the qualification-matching scoring logic, the notification dispatch job, and the nightly `procurement_stats` aggregation job.
+Wired up as of that work: `GET/POST /api/review/*` (the approval queue), `GET /api/tors*` (the first Tor-facing read API), `GET /api/extraction/ai-jobs*`, a cron-driven scheduler (off by default), cross-record duplicate scoring, and the `procurement_stats` outlier aggregation (triggered manually or on schedule, not yet automatically nightly-only).
+
+Still not wired up: the qualification-matching scoring logic, the notification dispatch job, any authentication/RBAC (every new admin-facing route has a `// TODO: auth middleware` marker and trusts a client-supplied `actorId`), and the full repository search/filter/sort API (FR-REP-*) — the `GET /api/tors` endpoint is intentionally minimal (published records only, no filters).
 
 ## Atlas-specific notes
 

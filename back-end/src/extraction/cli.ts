@@ -22,6 +22,8 @@ interface Args {
   source?: string;
   all: boolean;
   list: boolean;
+  extractAi: boolean;
+  analyzeOutliers: boolean;
   dryRun: boolean;
   attachments: boolean;
   noDetail: boolean;
@@ -41,6 +43,8 @@ function parseArgs(argv: string[]): Args {
   const args: Args = {
     all: false,
     list: false,
+    extractAi: false,
+    analyzeOutliers: false,
     dryRun: false,
     attachments: false,
     noDetail: false,
@@ -57,6 +61,8 @@ function parseArgs(argv: string[]): Args {
       case '--source': args.source = next(); break;
       case '--all': args.all = true; break;
       case '--list': args.list = true; break;
+      case '--extract-ai': args.extractAi = true; break;
+      case '--analyze-outliers': args.analyzeOutliers = true; break;
       case '--dry-run': args.dryRun = true; break;
       case '--attachments': args.attachments = true; break;
       case '--no-detail': args.noDetail = true; break;
@@ -90,6 +96,8 @@ Extraction pipeline
   --list                    Show every registered source and its compliance status
   --source <id>             Run one source (${SOURCE_IDS.join(' | ')})
   --all                     Run every source cleared to run unattended
+  --extract-ai              Run the AI extraction sweep over uploaded documents
+  --analyze-outliers        Recompute budget-outlier flags and ProcurementStat
   --dry-run                 Parse and report; write nothing, connect to nothing
   --attachments             Download PDFs and record them as Documents
   --no-detail               Listing pages only — skips one request per row
@@ -152,9 +160,34 @@ async function main(): Promise<void> {
 
   if (args.help) return printHelp();
   if (args.list) return printSources();
+
+  if (args.extractAi || args.analyzeOutliers) {
+    // Neither of these has a meaningful dry-run mode (there's no "site
+    // markup" to check ahead of time the way a scrape dry-run has) — both
+    // read and write Mongo directly, so a real connection is always needed.
+    const { connectDB } = await import('../config/db.js');
+    await connectDB();
+    const logger = createLogger('extract');
+    try {
+      if (args.extractAi) {
+        const { runExtractionSweep } = await import('./pipeline/aiExtraction.js');
+        const result = await runExtractionSweep({ logger });
+        console.log('\nAI extraction sweep:', result);
+      }
+      if (args.analyzeOutliers) {
+        const { runOutlierAnalysis } = await import('../analytics/procurementStats.js');
+        const result = await runOutlierAnalysis(logger);
+        console.log('\nOutlier analysis:', result);
+      }
+    } finally {
+      await mongoose.disconnect();
+    }
+    return;
+  }
+
   if (!args.source && !args.all) {
     printHelp();
-    throw new Error('Nothing to do: pass --source <id>, --all, or --list.');
+    throw new Error('Nothing to do: pass --source <id>, --all, --extract-ai, --analyze-outliers, or --list.');
   }
 
   const options: RunOptions = {

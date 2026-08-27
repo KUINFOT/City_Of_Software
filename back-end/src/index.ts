@@ -1,12 +1,18 @@
 import { createApp } from './app';
 import { connectDB } from './config/db';
 import { env } from './config/env';
+import { startScheduler } from './scheduler';
 
 async function start(): Promise<void> {
   const app = createApp();
 
   try {
     await connectDB();
+    // Only start scheduled crawling once Mongo is actually reachable — a
+    // scheduler that can't persist anything shouldn't be firing jobs that
+    // are guaranteed to fail. startScheduler() itself is a no-op unless
+    // SCHEDULER_ENABLED=true (off by default, see .env.example).
+    startScheduler();
   } catch (err) {
     console.error(
       '⚠️  Could not connect to MongoDB. The server will still start, but ' +

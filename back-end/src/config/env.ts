@@ -1,5 +1,6 @@
 import dotenv from 'dotenv';
 import { extractionConfig } from '../extraction/core/config';
+import { gcpConfig } from './gcpConfig';
 
 dotenv.config();
 
@@ -24,13 +25,12 @@ export const env = {
   nodeEnv: optional('NODE_ENV', 'development'),
   corsOrigin: optional('CORS_ORIGIN', 'http://localhost:3000'),
   mongodbUri: required('MONGODB_URI'),
-  gcp: {
-    projectId: optional('GCP_PROJECT_ID'),
-    location: optional('GCP_LOCATION', 'us'),
-    docAiProcessorId: optional('DOC_AI_PROCESSOR_ID'),
-    vertexLocation: optional('VERTEX_AI_LOCATION', 'us-central1'),
-    vertexModel: optional('VERTEX_AI_MODEL', 'gemini-2.0-flash'),
-  },
+  /**
+   * Defined in src/config/gcpConfig.ts so AI-service tests and any future
+   * GCP-only tooling can read it without importing this module, which
+   * requires MONGODB_URI.
+   */
+  gcp: gcpConfig,
   /**
    * Extraction pipeline settings. Defined in src/extraction/core/config.ts so
    * the pipeline's dry-run mode can read them without importing this module,

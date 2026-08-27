@@ -43,11 +43,26 @@ const documentSchema = new Schema(
       /** True when the download only succeeded with TLS verification off. */
       insecureTransport: { type: Boolean, default: false },
     },
+
+    /**
+     * AI-extraction retry bookkeeping (src/extraction/pipeline/aiExtraction.ts).
+     * `attempts` caps automatic retries (NFR-REL-03: parked for admin
+     * attention, not lost, once EXTRACTION_MAX_ATTEMPTS is reached) — the
+     * document and its bytes are never deleted on failure, only the retry
+     * loop stops picking it up again.
+     */
+    extraction: {
+      attempts: { type: Number, default: 0 },
+      lastAttemptAt: Date,
+      lastError: String,
+    },
   },
   { timestamps: true }
 );
 
 documentSchema.index({ torId: 1 });
+// The AI-extraction sweep's work queue: oldest uploaded-but-unprocessed first.
+documentSchema.index({ status: 1, createdAt: 1 });
 // De-duplicates identical bytes across sources and across re-runs.
 documentSchema.index({ 'origin.sha256': 1 }, { sparse: true });
 documentSchema.index({ 'origin.storageKey': 1 }, { sparse: true });

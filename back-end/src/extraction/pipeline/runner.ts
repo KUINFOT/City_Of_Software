@@ -42,6 +42,7 @@ import type {
 } from '../types';
 import { normalize } from './normalize';
 import { storeAttachments } from './attachments';
+import { checkForDuplicates } from './duplicateCheck';
 import { LocalBlobStore, type BlobStore } from './storage';
 
 const DEFAULT_OPTIONS: AdapterOptions = {
@@ -300,6 +301,12 @@ export async function runSource(
         const doc = await TorModel.create(flatten({ ...upsert.setOnInsert, ...upsert.set }));
         torId = doc._id as Types.ObjectId;
         created += 1;
+
+        // Only newly-created Tors are duplicate CANDIDATES — an updated or
+        // unchanged row already is the corpus, not something to compare
+        // against it. Failure here must not lose the Tor just created, so
+        // it stays inside this row's own try/catch rather than aborting.
+        await checkForDuplicates(doc, logger);
       } else {
         torId = existing._id as Types.ObjectId;
         const previousHash = (existing as { sourceRef?: { contentHash?: string } }).sourceRef

@@ -40,6 +40,13 @@ function mimeTypeFor(filename: string): string {
     return 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
   }
   if (lower.endsWith('.zip')) return 'application/zip';
+  // FR-EXT-01's "photographs" — no adapter links one directly today (every
+  // attachment collected so far is PDF-gated), but a standalone scanned
+  // image is a plausible future attachment and Document AI accepts these
+  // mime types directly, so it's cheap to recognise now.
+  if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) return 'image/jpeg';
+  if (lower.endsWith('.png')) return 'image/png';
+  if (lower.endsWith('.tif') || lower.endsWith('.tiff')) return 'image/tiff';
   return 'application/octet-stream';
 }
 
