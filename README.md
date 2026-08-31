@@ -17,7 +17,7 @@ generate AI summaries.
 ```
 City_Of_Software/
 ├── back-end/    Express + TypeScript API — see back-end/README.md
-└── front-end/   Next.js frontend — landing, registration, dashboard, settings
+└── front-end/   Next.js frontend — landing, browse TORs, registration, dashboard, settings
 ```
 
 ## Getting started (back-end)
@@ -52,6 +52,7 @@ Available pages:
 | Page | URL |
 | --- | --- |
 | Landing page | `http://localhost:3000/` |
+| Browse TORs | `http://localhost:3000/browse-tors` |
 | Registration | `http://localhost:3000/register` |
 | Vendor dashboard | `http://localhost:3000/dashboard` |
 | Account settings | `http://localhost:3000/settings` |

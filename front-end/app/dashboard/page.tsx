@@ -1,5 +1,9 @@
-import { Bell, Bookmark, ChevronDown, Clock3, FileText, MapPin, School, Sparkles, Video } from "lucide-react";
+"use client";
+
+import { Bell, Bookmark, Clock3, FileText, MapPin, School, Sparkles, Video } from "lucide-react";
 import { AccountShell } from "@/components/account-shell";
+import { AccountMenu } from "@/components/account-menu";
+import { useAuth } from "@/components/auth-provider";
 
 const matches = [
   { icon: Video, category: "AI Video Analytics", match: "96% Match", title: "District CCTV Surveillance Machine Vision Analysis Engine", agency: "Sathon & Pathum Wan District Office", budget: "฿ 8,500,000", deadline: "15 April 2026" },
@@ -8,11 +12,14 @@ const matches = [
 ];
 
 export default function DashboardPage() {
+  const { user } = useAuth();
+  const firstName = user?.name.split(" ")[0] ?? "there";
+
   return (
     <AccountShell>
       <header className="account-header">
-        <div><h1>Welcome Back, Anont S.</h1><p>Bangkok Innovations Ltd. · Premium Verified Supplier</p></div>
-        <div className="profile-actions"><button aria-label="Notifications"><Bell size={18} /></button><span className="avatar avatar--small">AS</span><ChevronDown size={16} /></div>
+        <div><h1>Welcome Back, {firstName}</h1><p>{user?.organization ?? "Your organisation"} · {user?.role === "vendor" ? "Supplier account" : `${user?.role} account`}</p></div>
+        <div className="profile-actions"><button aria-label="Notifications"><Bell size={18} /></button><AccountMenu compact /></div>
       </header>
 
       <section className="metrics-grid">

@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Plus, Trash2 } from "lucide-react";
 import { AccountShell } from "@/components/account-shell";
+import { useAuth } from "@/components/auth-provider";
 
 const initialSearches = [
   { title: "CCTV surveillance & smart computer vision integrations", filter: "BMA Sathon & Pathum Wan Districts only" },
@@ -14,6 +15,7 @@ function Toggle({ checked, onChange }: { checked: boolean; onChange: () => void 
 }
 
 export default function SettingsPage() {
+  const { user } = useAuth();
   const [toggles, setToggles] = useState([true, true, true]);
   const [searches, setSearches] = useState(initialSearches);
   const [saved, setSaved] = useState(false);
@@ -22,6 +24,8 @@ export default function SettingsPage() {
     ["Instant Urgent Alert (Deadlines < 10 days)", "Ping my notifications immediately when highly qualified matches have brief submission windows remaining."],
     ["BMA Compliance Revision Notices", "Notify me when a bookmarked district project undergoes revised technical specification draft releases."],
   ];
+  const initials = user?.name.split(" ").map((part) => part[0]).slice(0, 2).join("") ?? "";
+  const roleLabel = user?.role === "vendor" ? "Software Vendor" : user?.role === "reviewer" ? "BMA Government Official" : "Platform Administrator";
 
   return (
     <AccountShell>
@@ -29,10 +33,10 @@ export default function SettingsPage() {
       <div className="settings-grid">
         <section className="profile-panel">
           <div className="profile-cover" />
-          <div className="avatar avatar--large">AS</div>
-          <h2>Anont Saengsirithan</h2><p>Principal Architect, Bangkok Innovations Ltd.</p><span className="verified">VERIFIED BMA SUPPLIER</span>
+          <div className="avatar avatar--large">{initials}</div>
+          <h2>{user?.name ?? "Your account"}</h2><p>{roleLabel}, {user?.organization ?? "City of Software"}</p><span className="verified">{user?.role === "vendor" ? "VENDOR PROFILE" : "PLATFORM ACCOUNT"}</span>
           <hr />
-          <div className="org-details"><h3>ORGANIZATION DETAILS</h3><small>BMA Supplier Code</small><strong>TH-BKK-48220</strong><small>Headquarters</small><strong>Sathorn, Bangkok</strong><small>Company Phone</small><strong>+66 2 481 9284</strong><small>Verified Core Stacks</small><strong>Kubernetes, GIS Systems, AI, PHP</strong></div>
+          <div className="org-details"><h3>PROFILE DETAILS</h3><small>Email address</small><strong>{user?.email ?? "—"}</strong><small>Organisation</small><strong>{user?.organization ?? "—"}</strong><small>Platform role</small><strong>{roleLabel}</strong><small>Profile verification</small><strong>Demo profile · Pending backend connection</strong></div>
         </section>
         <div className="settings-main">
           <section className="settings-card" id="notifications">

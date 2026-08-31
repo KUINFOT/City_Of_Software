@@ -2,7 +2,7 @@ import { Search } from "lucide-react";
 
 export function HeroSearch() {
   return (
-    <form className="hero-search" action="/dashboard" method="get">
+    <form className="hero-search" action="/browse-tors" method="get">
       <Search size={21} />
       <input
         aria-label="Search TORs"
