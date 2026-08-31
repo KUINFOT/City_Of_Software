@@ -1,13 +1,152 @@
 import { Request, Response, NextFunction } from 'express';
 import { Types } from 'mongoose';
 import { TorModel } from '../models/Tor';
+import { AgencyModel } from '../models/Agency';
+import { DocumentModel } from '../models/Document';
 import { AuditLogModel } from '../models/AuditLog';
+import { LocalBlobStore } from '../extraction/pipeline/storage';
+import { extractionConfig } from '../extraction/core/config';
+
+/** Mirrors Tor.ts's `procurementMethod` enum — kept local since nothing else
+ *  needs to validate against it at the API boundary. */
+const PROCUREMENT_METHODS = ['e_bidding', 'selection', 'special_method', 'specific_method', 'other'] as const;
 
 // TODO: add auth middleware (admin role) once it exists. Until then, every
 // write endpoint below takes `actorId` explicitly in the request body as a
 // stand-in for `req.user.id`, so the audit trail (FR-ADM-06) at least
 // records SOMETHING attributable rather than nothing — but nothing here
 // actually verifies the caller is who they claim to be.
+
+/**
+ * POST /api/review/tors — US-041: an admin manually creates a TOR with an
+ * uploaded source document, for when an agency's own site changes shape (or
+ * goes down) and the scraper can no longer reach it — vendors should not
+ * lose visibility into that agency's opportunities just because its adapter
+ * broke.
+ *
+ * Deliberately reuses the SAME downstream path a scraped TOR takes: the file
+ * is written to the blob store and the Document is left at `status:
+ * 'uploaded'`, exactly like `pipeline/attachments.ts` leaves one — so the
+ * next extraction sweep (pipeline/aiExtraction.ts) OCRs it, extracts
+ * structured fields (including the standardised summary, US-015) and routes
+ * it through the same confidence gate (BR-03) as anything the crawler found.
+ * There is no separate "manual" publish path to keep in sync with the real
+ * one, and BR-05 ("nothing publishes without a source document") holds here
+ * for the same reason it holds for a scraped TOR: `file` is required, not
+ * optional.
+ */
+export async function createManualTor(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const body = (req.body ?? {}) as Record<string, string | undefined>;
+    const { actorId, agencyId, title } = body;
+
+    if (!req.file) {
+      res.status(400).json({ error: 'No file uploaded. Use multipart form field "file".' });
+      return;
+    }
+    if (!actorId) {
+      res.status(400).json({ error: 'actorId is required' });
+      return;
+    }
+    if (!agencyId) {
+      res.status(400).json({ error: 'agencyId is required' });
+      return;
+    }
+    if (!title || !title.trim()) {
+      res.status(400).json({ error: 'title is required' });
+      return;
+    }
+    if (
+      body.procurementMethod &&
+      !PROCUREMENT_METHODS.includes(body.procurementMethod as (typeof PROCUREMENT_METHODS)[number])
+    ) {
+      res.status(400).json({ error: `procurementMethod must be one of: ${PROCUREMENT_METHODS.join(', ')}` });
+      return;
+    }
+
+    let submissionDeadline: Date | undefined;
+    if (body.submissionDeadline) {
+      submissionDeadline = new Date(body.submissionDeadline);
+      if (Number.isNaN(submissionDeadline.getTime())) {
+        res.status(400).json({ error: 'submissionDeadline is not a valid date' });
+        return;
+      }
+    }
+
+    let budgetAmountThb: number | undefined;
+    if (body.budgetAmountThb !== undefined && body.budgetAmountThb !== '') {
+      budgetAmountThb = Number(body.budgetAmountThb);
+      if (!Number.isFinite(budgetAmountThb)) {
+        res.status(400).json({ error: 'budgetAmountThb must be a number' });
+        return;
+      }
+    }
+
+    const agency = await AgencyModel.findById(agencyId).select('name').lean();
+    if (!agency) {
+      res.status(404).json({ error: 'agencyId does not reference an existing agency' });
+      return;
+    }
+
+    const tor = await TorModel.create({
+      agencyId: agency._id,
+      agencyName: agency.name,
+      title: title.trim(),
+      referenceNumber: body.referenceNumber || undefined,
+      description: body.description || undefined,
+      procurementMethod: body.procurementMethod as (typeof PROCUREMENT_METHODS)[number] | undefined,
+      budget: budgetAmountThb !== undefined ? { amountThb: budgetAmountThb, isEstimated: true } : undefined,
+      timeline: submissionDeadline ? { submissionDeadline } : undefined,
+      status: 'discovered',
+      // No `sourceRef` at all — that subdocument is scrape-only identity/dedup
+      // metadata, and its upsert-key index is sparse specifically so a
+      // manually created TOR (no scraped identity) doesn't collide on nulls.
+      source: { importMethod: 'manual', discoveredAt: new Date() },
+    });
+
+    // Content-addressed, same as a scraped attachment — a second manual
+    // upload of the same bytes costs no extra storage (see storage.ts).
+    const store = new LocalBlobStore(extractionConfig.storageDir);
+    const blob = await store.put('manual', req.file.originalname, req.file.buffer);
+
+    const document = await DocumentModel.create({
+      originalName: req.file.originalname,
+      mimeType: req.file.mimetype,
+      size: req.file.size,
+      // 'uploaded' — not run through OCR here — is what puts this document in
+      // the extraction sweep's work queue (DocumentModel.find({status:
+      // 'uploaded'}) in aiExtraction.ts), identically to a scraped attachment.
+      status: 'uploaded',
+      torId: tor._id,
+      agencyId: agency._id,
+      uploadedBy: new Types.ObjectId(actorId),
+      origin: {
+        label: 'Manually uploaded by admin',
+        storageKey: blob.key,
+        sha256: blob.sha256,
+        downloadedAt: new Date(),
+        insecureTransport: false,
+      },
+    });
+
+    tor.documentIds.push(document._id as Types.ObjectId);
+    await tor.save();
+
+    await AuditLogModel.create({
+      actorId,
+      action: 'tor.import',
+      entityType: 'tor',
+      entityId: tor._id,
+      before: null,
+      after: { title: tor.title, agencyId: agency._id, documentId: document._id, importMethod: 'manual' },
+      ipAddress: req.ip,
+    });
+
+    res.status(201).json({ tor, document });
+  } catch (err) {
+    next(err);
+  }
+}
 
 /** GET /api/review/queue — FR-ADM-01: pending records, oldest first. */
 export async function listReviewQueue(req: Request, res: Response, next: NextFunction): Promise<void> {

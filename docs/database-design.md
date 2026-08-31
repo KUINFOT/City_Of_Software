@@ -431,7 +431,7 @@ Mongoose models matching this design live in `back-end/src/models/`:
 
 The extraction pipeline that populates `tors`, `documents`, `scrape_jobs`, and `extraction_jobs` is documented separately in [extraction-pipeline.md](extraction-pipeline.md), which now also covers the review workflow, AI-extraction wiring, scheduling, cross-record duplicate detection, and budget-outlier analytics — see its "Review, OCR, scheduling, duplicates & outliers" section.
 
-Wired up as of that work: `GET/POST /api/review/*` (the approval queue), `GET /api/tors*` (the first Tor-facing read API), `GET /api/extraction/ai-jobs*`, a cron-driven scheduler (off by default), cross-record duplicate scoring, and the `procurement_stats` outlier aggregation (triggered manually or on schedule, not yet automatically nightly-only).
+Wired up as of that work: `GET/POST /api/review/*` (the approval queue, plus `POST /api/review/tors` for admin-created manual TORs — US-041, Section 13.11), `GET /api/tors*` (the first Tor-facing read API), `GET /api/extraction/ai-jobs*`, a cron-driven scheduler (off by default), cross-record duplicate scoring, and the `procurement_stats` outlier aggregation (triggered manually or on schedule, not yet automatically nightly-only).
 
 Still not wired up: the qualification-matching scoring logic, the notification dispatch job, any authentication/RBAC (every new admin-facing route has a `// TODO: auth middleware` marker and trusts a client-supplied `actorId`), and the full repository search/filter/sort API (FR-REP-*) — the `GET /api/tors` endpoint is intentionally minimal (published records only, no filters).
 

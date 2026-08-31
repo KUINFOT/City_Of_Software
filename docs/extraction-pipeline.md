@@ -306,6 +306,7 @@ npm run extract -- --analyze-outliers
 | `POST /api/extraction/sources/:id/run` | Trigger a crawl run |
 | `GET /api/extraction/jobs` / `jobs/:id` | Crawl run history |
 | `GET /api/extraction/ai-jobs` / `ai-jobs/:id` | AI-extraction attempt history (Section 13.3) |
+| `POST /api/review/tors` | Manually create a TOR + source document (Section 13.11) |
 | `GET /api/review/queue` / `queue/:id` | The pending-review queue (Section 13.6) |
 | `POST /api/review/queue/:id/{approve,reject,supersede}` | Review actions, each audited |
 | `GET /api/tors` / `tors/:id` | Published records only, with per-field confidence and outlier flag (Section 13.7) |
@@ -504,6 +505,16 @@ Google renamed Vertex AI to the **Gemini Enterprise Agent Platform** (announced 
 **`vertexAI.service.ts` was also renamed to `gemini.service.ts`.** The platform wrapper around Gemini has now been renamed once already (Vertex AI → Gemini Enterprise Agent Platform) and the SDK package name changed independently of that — naming the file after the model itself, which has stayed stable across both changes, is the naming least likely to go stale the next time Google renames the platform or ships a new SDK.
 
 `VERTEX_AI_MODEL`'s default also moved from `gemini-2.0-flash` to **`gemini-3.5-flash-lite`**. Reasoning: this pipeline only needs structured field extraction, not open-ended reasoning, and every extraction already passes through grounding checks plus mandatory human review by default (BR-03) — so a Flash-Lite tier model is the right fit, not a cost compromise, and it costs roughly 3–8x less per document than a full Flash-tier model at this project's realistic volume. See the field-mapping and confidence-chain design in 13.2 for why a cheaper model's occasional misses are safely caught downstream rather than shown to vendors.
+
+### 13.11 Manual TOR upload (US-041), and where US-015/US-037 turned out to already live
+
+Three more Jira cards (SCRUM-15/37/41 = US-015/037/041) were checked against this codebase. Two were already satisfied by work landed earlier in this section; one was a real gap, now closed.
+
+**US-041 — "an agency changing its site does not take that agency offline for vendors."** This was the actual gap: nothing let an admin post a TOR when a source site changes shape or goes down and the scraper can't reach it. `POST /api/review/tors` (`controllers/review.controller.ts`'s `createManualTor`) closes it — multipart body (`file` + `agencyId`, `title`, `actorId`, and the same optional fields a scraped TOR has: `referenceNumber`, `description`, `procurementMethod`, `budgetAmountThb`, `submissionDeadline`). It deliberately creates **no separate manual-publish path**: the Tor is created at `status: 'discovered'` with `source.importMethod: 'manual'` and no `sourceRef` (that subdocument is scrape-only identity/dedup metadata — its upsert-key index is sparse for exactly this case), and the file is written to the same content-addressed blob store and left as a `Document` at `status: 'uploaded'`. That status is what puts it in the extraction sweep's existing work queue — the same OCR, structured extraction, grounding, and confidence-gated routing (BR-03) a scraped TOR goes through, with zero special-casing. `file` is required, matching BR-05 ("nothing publishes without a source document") for the same reason it's required on the scrape path. Verified live: a manual TOR posted against a real Atlas cluster correctly stayed invisible on `GET /api/tors` and out of `GET /api/review/queue` while `discovered`, then a real extraction-sweep run picked up its document unmodified and routed it to `pending_review` at confidence 0 (no GCP credentials in dev) — proving the reuse, not just asserting it. Test data was deleted afterward.
+
+**US-015 — "a standardised summary of each TOR ... without reading a 40-page scanned PDF."** Already built: `gemini.service.ts`'s prompt asks explicitly for "a concise, standardised natural-language summary," stored at `Tor.summaryAi.text` by the extraction sweep (13.2/13.3) and returned by `GET /api/tors/:id` always labelled `machineGenerated: true, authoritative: false` (13.7). No change needed.
+
+**US-037 — "unchanged postings skipped, so that we do not pay to process the same document repeatedly."** Also already built, at two layers: `runner.ts` compares each listing's `sourceRef.contentHash` against the stored one and skips the write entirely when unchanged (only `lastSeenAt` is touched); independently, `attachments.ts` content-addresses every downloaded file by SHA-256 and dedupes on `(sha256, torId)` before ever creating a `Document`, so an unchanged posting's attachment is fetched once and never billed for OCR/extraction twice. The extraction sweep itself only ever queries `Document.status: 'uploaded'`, so an already-processed document is structurally never reconsidered. No change needed.
 
 ---
 

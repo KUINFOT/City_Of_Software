@@ -1,5 +1,7 @@
 import { Router } from 'express';
+import { upload } from '../middleware/upload';
 import {
+  createManualTor,
   listReviewQueue,
   getReviewRecord,
   approveRecord,
@@ -11,6 +13,7 @@ import {
 // the top of review.controller.ts.
 const router = Router();
 
+router.post('/tors', upload.single('file'), createManualTor);
 router.get('/queue', listReviewQueue);
 router.get('/queue/:id', getReviewRecord);
 router.post('/queue/:id/approve', approveRecord);
