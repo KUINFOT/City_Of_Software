@@ -6,6 +6,8 @@ import { DocumentModel } from '../models/Document';
 import { AuditLogModel } from '../models/AuditLog';
 import { LocalBlobStore } from '../extraction/pipeline/storage';
 import { extractionConfig } from '../extraction/core/config';
+import { EXTRACTED_FIELD_KEYS, FIELD_TO_TOR_PATH, type ExtractedFieldKey } from '../extraction/core/fieldSchema';
+import { coerceFieldValue } from '../extraction/core/fieldCoercion';
 
 /** Mirrors Tor.ts's `procurementMethod` enum — kept local since nothing else
  *  needs to validate against it at the API boundary. */
@@ -189,6 +191,120 @@ export async function getReviewRecord(req: Request, res: Response, next: NextFun
   }
 }
 
+/**
+ * PATCH /api/review/queue/:id/fields — US-043: repair OCR/extraction errors
+ * field-by-field, with the original document viewable beside the editor via
+ * `GET /api/documents/:id/file`.
+ *
+ * Every corrected key is added to `Tor.extraction.humanCorrectedFields`
+ * (NFR-DAT-06) — `pipeline/aiExtraction.ts`'s `applyExtractionToTor` has
+ * skipped any key in that set since it was first wired, ahead of this
+ * endpoint existing, so a later re-extraction of the same TOR can never
+ * silently clobber a human's fix. Allowed on `pending_review` (the normal
+ * review-time repair) and `published` (a correction found after the fact —
+ * e.g. a vendor reports a wrong budget); not on `rejected`/`superseded`/
+ * `archived`, where there is nothing live left to correct. Every accepted
+ * correction is written to `AuditLog` (`tor.correct_fields`) with a real
+ * before/after per field — this is what makes US-045's "traced to its
+ * origin" true for a human-corrected value, not just an AI-written one.
+ */
+export async function correctFields(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const { actorId, corrections } = req.body as { actorId?: string; corrections?: Record<string, unknown> };
+    if (!actorId) {
+      res.status(400).json({ error: 'actorId is required' });
+      return;
+    }
+    if (
+      !corrections ||
+      typeof corrections !== 'object' ||
+      Array.isArray(corrections) ||
+      Object.keys(corrections).length === 0
+    ) {
+      res.status(400).json({ error: 'corrections must be a non-empty object keyed by field name' });
+      return;
+    }
+
+    const keys = Object.keys(corrections);
+    const unknownKeys = keys.filter((k) => !(EXTRACTED_FIELD_KEYS as readonly string[]).includes(k));
+    if (unknownKeys.length > 0) {
+      res.status(400).json({
+        error: `Unknown field(s): ${unknownKeys.join(', ')}. Valid fields: ${EXTRACTED_FIELD_KEYS.join(', ')}`,
+      });
+      return;
+    }
+    if ('procurementMethod' in corrections) {
+      const v = corrections.procurementMethod;
+      if (typeof v !== 'string' || !PROCUREMENT_METHODS.includes(v as (typeof PROCUREMENT_METHODS)[number])) {
+        res.status(400).json({ error: `procurementMethod must be one of: ${PROCUREMENT_METHODS.join(', ')}` });
+        return;
+      }
+    }
+
+    const record = await TorModel.findById(req.params.id);
+    if (!record) {
+      res.status(404).json({ error: 'Record not found' });
+      return;
+    }
+    if (!['pending_review', 'published'].includes(record.status)) {
+      res.status(409).json({
+        error: `Record is "${record.status}" — corrections are only allowed on pending_review or published records`,
+      });
+      return;
+    }
+
+    const plain = record.toObject();
+    const set: Record<string, unknown> = {};
+    const before: Record<string, unknown> = {};
+    const after: Record<string, unknown> = {};
+    const correctedKeys: string[] = [];
+
+    for (const key of keys) {
+      const fieldKey = key as ExtractedFieldKey;
+      const value = coerceFieldValue(fieldKey, corrections[key]);
+      if (value === undefined) {
+        res.status(400).json({ error: `Could not parse a valid value for "${key}"` });
+        return;
+      }
+      const torPath = FIELD_TO_TOR_PATH[fieldKey];
+      before[key] = getByPath(plain, torPath);
+      // evaluationCriteria's real shape on the Tor is a structured array
+      // ({criterion, weightPercent}) — see fieldCoercion.ts's comment on why
+      // both write paths can only responsibly accept raw text for it.
+      if (fieldKey === 'evaluationCriteria') {
+        set.evaluationCriteria = [{ criterion: value, weightPercent: undefined }];
+      } else {
+        set[torPath] = value;
+      }
+      after[key] = value;
+      correctedKeys.push(key);
+    }
+
+    await TorModel.updateOne(
+      { _id: record._id },
+      {
+        $set: set,
+        $addToSet: { 'extraction.humanCorrectedFields': { $each: correctedKeys } },
+      }
+    );
+
+    await AuditLogModel.create({
+      actorId,
+      action: 'tor.correct_fields',
+      entityType: 'tor',
+      entityId: record._id,
+      before,
+      after,
+      ipAddress: req.ip,
+    });
+
+    const updated = await TorModel.findById(record._id);
+    res.json(updated);
+  } catch (err) {
+    next(err);
+  }
+}
+
 /** POST /api/review/queue/:id/approve — FR-ADM-05: publish, and audit it. */
 export async function approveRecord(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
@@ -366,4 +482,12 @@ function mapToObject(value: unknown): Record<string, number> {
 function toPositiveInt(value: unknown): number | undefined {
   const parsed = Number(value);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+/** Read a dotted path ("timeline.announcementDate") off a plain object. */
+function getByPath(obj: unknown, path: string): unknown {
+  return path.split('.').reduce<unknown>((cursor, segment) => {
+    if (cursor == null || typeof cursor !== 'object') return undefined;
+    return (cursor as Record<string, unknown>)[segment];
+  }, obj);
 }

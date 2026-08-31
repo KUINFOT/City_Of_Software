@@ -19,6 +19,7 @@ import { TorModel } from '../../models/Tor';
 import { extractText } from '../../services/documentAI.service';
 import { extractStructuredFields } from '../../services/gemini.service';
 import { EXTRACTION_PROMPT_VERSION, type ExtractedFieldKey, type FieldExtraction } from '../core/fieldSchema';
+import { asComplexity, asDate, asNumber, asString, asStringArray } from '../core/fieldCoercion';
 import { decideRouting } from '../core/reviewRouting';
 import { extractionConfig } from '../core/config';
 import { createLogger, type Logger } from '../core/logger';
@@ -301,47 +302,6 @@ function assignIfNotCorrected(
 ): void {
   if (value === undefined || value === null || corrected.has(fieldKey)) return;
   target[torPath] = value;
-}
-
-function asString(value: unknown): string | undefined {
-  if (typeof value !== 'string') return undefined;
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : undefined;
-}
-
-function asNumber(value: unknown): number | undefined {
-  if (typeof value !== 'string') return undefined;
-  const cleaned = value.replace(/[,\s]/g, '');
-  const parsed = Number(cleaned);
-  return Number.isFinite(parsed) ? parsed : undefined;
-}
-
-function asDate(value: unknown): Date | undefined {
-  if (typeof value !== 'string' || !value.trim()) return undefined;
-  const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime()) ? undefined : parsed;
-}
-
-function asComplexity(value: unknown): 'low' | 'medium' | 'high' | undefined {
-  if (typeof value !== 'string') return undefined;
-  const lower = value.trim().toLowerCase();
-  return lower === 'low' || lower === 'medium' || lower === 'high' ? lower : undefined;
-}
-
-/** Best-effort array parse: try JSON first, fall back to a delimited split. */
-function asStringArray(value: unknown): string[] | undefined {
-  if (typeof value !== 'string' || !value.trim()) return undefined;
-  try {
-    const parsed = JSON.parse(value);
-    if (Array.isArray(parsed)) return parsed.map(String).filter(Boolean);
-  } catch {
-    // Not JSON — fall through to a delimiter split below.
-  }
-  const parts = value
-    .split(/[,;\n]/)
-    .map((part) => part.trim())
-    .filter(Boolean);
-  return parts.length > 0 ? parts : undefined;
 }
 
 async function recordFailure(

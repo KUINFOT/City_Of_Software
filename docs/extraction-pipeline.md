@@ -303,13 +303,17 @@ npm run extract -- --analyze-outliers
 | Route | Purpose |
 |---|---|
 | `GET /api/extraction/sources` | The registry, compliance included |
+| `GET /api/extraction/health` | Per-source adapter health (Section 13.12) |
 | `POST /api/extraction/sources/:id/run` | Trigger a crawl run |
 | `GET /api/extraction/jobs` / `jobs/:id` | Crawl run history |
 | `GET /api/extraction/ai-jobs` / `ai-jobs/:id` | AI-extraction attempt history (Section 13.3) |
 | `POST /api/review/tors` | Manually create a TOR + source document (Section 13.11) |
 | `GET /api/review/queue` / `queue/:id` | The pending-review queue (Section 13.6) |
+| `PATCH /api/review/queue/:id/fields` | Correct extracted field values (Section 13.13) |
 | `POST /api/review/queue/:id/{approve,reject,supersede}` | Review actions, each audited |
 | `GET /api/tors` / `tors/:id` | Published records only, with per-field confidence and outlier flag (Section 13.7) |
+| `GET /api/documents/:id/file` | The original stored document bytes (Section 13.13) |
+| `GET /api/audit-log` | Every recorded human action, filterable (Section 13.14) |
 
 `POST .../run` is **synchronous today**. A full DEPA pull with attachments takes minutes, so this is the first thing to move behind a queue when the admin UI lands. None of these routes have authentication yet — see Section 13's "still not built" list.
 
@@ -515,6 +519,33 @@ Three more Jira cards (SCRUM-15/37/41 = US-015/037/041) were checked against thi
 **US-015 — "a standardised summary of each TOR ... without reading a 40-page scanned PDF."** Already built: `gemini.service.ts`'s prompt asks explicitly for "a concise, standardised natural-language summary," stored at `Tor.summaryAi.text` by the extraction sweep (13.2/13.3) and returned by `GET /api/tors/:id` always labelled `machineGenerated: true, authoritative: false` (13.7). No change needed.
 
 **US-037 — "unchanged postings skipped, so that we do not pay to process the same document repeatedly."** Also already built, at two layers: `runner.ts` compares each listing's `sourceRef.contentHash` against the stored one and skips the write entirely when unchanged (only `lastSeenAt` is touched); independently, `attachments.ts` content-addresses every downloaded file by SHA-256 and dedupes on `(sha256, torId)` before ever creating a `Document`, so an unchanged posting's attachment is fetched once and never billed for OCR/extraction twice. The extraction sweep itself only ever queries `Document.status: 'uploaded'`, so an already-processed document is structurally never reconsidered. No change needed.
+
+### 13.12 Four more admin cards (US-042/043/044/045)
+
+**US-042 — "a queue of extracted TORs awaiting approval."** Already built: `GET /api/review/queue` (13.6). No change.
+
+**US-044 — "the health of each agency adapter ... before vendors notice the silence."** A real gap, now closed by `GET /api/extraction/health` and the pure classifier behind it, `core/sourceHealth.ts` (`classifySourceHealth`, unit-tested — every branch below has a dedicated test). For each registered source it looks at the last 5 `ScrapeJob`s (already indexed on `sourceId, startedAt`) and rolls them up into one status:
+
+- **`blocked`** — the source's ToS forbids running it (eGP BMA2 today). Checked first and unconditionally, so a source nobody expects to run is never confused with one that's actually broken.
+- **`unknown`** — no `ScrapeJob` exists yet for this source.
+- **`error`** — the latest run itself logged errors (or was left `running`, meaning the process likely died mid-crawl), or **two or more consecutive** runs did — a `skipped` run (the ToS gate under override) neither breaks nor extends that streak, since refusing to run isn't a fetch failure.
+- **`format_suspected`** — the latest non-skipped run found rows but not one had a parseable announcement date, which `pipeline/runner.ts`'s own `warnIfStale` log line already diagnoses as "the date selector or format has changed" — this makes that diagnosis a queryable field instead of a line an admin has to go find in logs.
+- **`stale`** — the newest announcement date any successful run has ever shown is older than `SOURCE_STALE_AFTER_DAYS` (default 60 — the same constant `warnIfStale` now reads, so the log warning and this endpoint can never silently disagree on what "old" means).
+- **`healthy`** — none of the above.
+
+Computed on request, not on a schedule: for 6 sources this is 6 cheap indexed queries, and a health check that could itself go stale defeats the point.
+
+### 13.13 Field correction, with the source document beside it (US-043)
+
+`PATCH /api/review/queue/:id/fields` accepts `{ actorId, corrections: { <fieldKey>: <value>, ... } }`, keyed by the same 16 `EXTRACTED_FIELD_KEYS` everything else in this section uses. Each value is coerced by `core/fieldCoercion.ts` — extracted out of `pipeline/aiExtraction.ts`'s `applyExtractionToTor` (which now imports the same functions) specifically so a human correction and an AI-written value are coerced by identical rules and can never end up in a different shape on the Tor. A value that fails its field's coercion (an unparseable date, a non-enum `estimatedComplexity`) is rejected with a 400 rather than silently dropped or half-applied.
+
+Every corrected key is added to `Tor.extraction.humanCorrectedFields` — the guard `aiExtraction.ts` has carried defensively since 13.3, before this endpoint existed to populate it, now finally does its job: a later re-extraction of the same TOR will never silently overwrite the fix. Allowed on `pending_review` (the normal review-time repair) and `published` (a correction found after the fact); rejected on `rejected`/`superseded`/`archived`, where there's nothing live left to correct.
+
+"With the original document beside me" needs the actual bytes, which nothing served before this: `GET /api/documents/:id/file` streams them straight from the blob store using `origin.storageKey` (the same field `pipeline/aiExtraction.ts` already reads bytes from for OCR), with the right `Content-Type`. It 404s with an explicit message for a `Document` that has no stored bytes — today, that's only one created through the older `POST /api/documents/upload` path, which processes a buffer in memory and never persists it; every document that actually reaches the review queue (scraped, or created via `POST /api/review/tors`) always has one.
+
+### 13.14 Audit log, readable (US-045)
+
+`AuditLogModel` and every write to it (`tor.import`, `tor.approve`, `tor.reject`, `tor.supersede`, and now `tor.correct_fields`) already existed by 13.6 — what was missing was a way to actually read it back. `GET /api/audit-log` does that: filterable by `entityId`, `entityType`, `actorId`, or `action`, newest first. It deliberately only ever holds actions a *person* took — an AI-written value's origin is traced the same way a scraped listing's already is, through `Tor.extraction` (model/prompt version, timestamp) and `GET /api/extraction/ai-jobs`, not duplicated into this collection. Between the two, "any published value can be traced to its origin" holds for both kinds of origin, human and machine.
 
 ---
 

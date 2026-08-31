@@ -3,6 +3,60 @@ import { ScrapeJobModel } from '../models/ScrapeJob';
 import { ExtractionJobModel } from '../models/ExtractionJob';
 import { runSource, SOURCES, SOURCE_IDS, getSource } from '../extraction';
 import type { RunOptions } from '../extraction';
+import { classifySourceHealth, type RecentRunSummary } from '../extraction/core/sourceHealth';
+import { extractionConfig } from '../extraction/core/config';
+
+/** How many of a source's most recent runs to look at when rolling up health. */
+const RECENT_RUNS_FOR_HEALTH = 5;
+
+/**
+ * GET /api/extraction/health — US-044: per-source adapter health, so a
+ * broken or silently-stale source shows up on an admin dashboard before a
+ * vendor notices a listing page has gone quiet. Classification rules live in
+ * core/sourceHealth.ts (pure, unit-tested); this just supplies its recent
+ * ScrapeJob history per source.
+ */
+export async function getSourcesHealth(_req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const today = new Date();
+    const results = await Promise.all(
+      SOURCE_IDS.map(async (id) => {
+        const source = SOURCES[id];
+        const jobs = await ScrapeJobModel.find({ sourceId: id })
+          .sort({ startedAt: -1 })
+          .limit(RECENT_RUNS_FOR_HEALTH)
+          .select('status startedAt newestAnnouncedAt torsFound errors')
+          .lean();
+
+        const runs: RecentRunSummary[] = jobs.map((job) => ({
+          status: (job.status ?? 'running') as RecentRunSummary['status'],
+          hadErrors: (job.errors?.length ?? 0) > 0,
+          startedAt: job.startedAt ?? new Date(0),
+          newestAnnouncedAt: job.newestAnnouncedAt ?? null,
+          torsFound: job.torsFound ?? 0,
+        }));
+
+        const health = classifySourceHealth(runs, {
+          blocked: source.compliance.tosStatus === 'prohibited',
+          today,
+          staleAfterDays: extractionConfig.staleAfterDays,
+        });
+
+        return {
+          sourceId: source.id,
+          label: source.label,
+          labelEn: source.labelEn,
+          tosStatus: source.compliance.tosStatus,
+          ...health,
+        };
+      })
+    );
+
+    res.json(results);
+  } catch (err) {
+    next(err);
+  }
+}
 
 /**
  * GET /api/extraction/sources — the registry, as data.

@@ -57,6 +57,14 @@ export const extractionConfig = {
   maxRetries: num('EXTRACTION_MAX_RETRIES', 3),
   /** Sent on every outbound request. Must stay honest and contactable. */
   userAgent: process.env.EXTRACTION_USER_AGENT || DEFAULT_USER_AGENT,
+  /**
+   * How many days old the newest announcement a source has ever shown us can
+   * get before that source counts as "stale" (US-044's per-source health
+   * signal, core/sourceHealth.ts). Shared with `pipeline/runner.ts`'s
+   * `warnIfStale` log check, so the two never drift onto two different
+   * definitions of "old".
+   */
+  staleAfterDays: num('SOURCE_STALE_AFTER_DAYS', 60),
 
   // --- AI extraction & review routing (FR-EXT-05, BR-03, TBD-01) ---------
 

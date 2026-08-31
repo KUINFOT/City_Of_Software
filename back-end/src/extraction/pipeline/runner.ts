@@ -420,7 +420,7 @@ function warnIfStale(logger: Logger, newest: Date | null, today: Date): void {
     );
     return;
   }
-  if (ageDays > 60) {
+  if (ageDays > extractionConfig.staleAfterDays) {
     logger.warn(
       `newest announcement is ${ageDays} days old (${newest.toISOString().slice(0, 10)}) — ` +
         'the source may have stopped publishing, or the crawl may be reading an archive'
