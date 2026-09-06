@@ -3,11 +3,12 @@
 Document-intelligence API: upload documents, run OCR/text extraction, and generate
 AI summaries.
 
-**Stack:** Node.js · Express · TypeScript · MongoDB Atlas (Mongoose) · Vertex AI /
-Document AI (Google Cloud).
+**Stack:** Node.js · Express · TypeScript · MongoDB Atlas (Mongoose) · Gemini Enterprise
+Agent Platform / Document AI (Google Cloud).
 
-> The AI services are currently **stubbed** — they return placeholder data so the API
-> runs without Google Cloud credentials. See [Wiring up the real AI](#wiring-up-the-real-ai).
+> The AI services **fall back to a safe stub** whenever `GCP_PROJECT_ID` is unset — no
+> Google Cloud credentials are required to run the API. See
+> [Wiring up the real AI](#wiring-up-the-real-ai).
 
 ## Prerequisites
 
@@ -66,20 +67,26 @@ src/
 ├── models/  Document.ts        Mongoose schema/model
 ├── routes/                     /api router + /api/documents routes
 ├── controllers/                request handlers
-├── services/                   documentAI (OCR) + vertexAI (summaries) — STUBBED
+├── services/                   documentAI (OCR) + gemini (extraction/summaries)
 ├── middleware/                 upload (multer), error handler
 └── types/                      shared TS interfaces
 ```
 
 ## Wiring up the real AI
 
-Both service files contain a working commented-out reference implementation:
+Both service files call the real Google Cloud APIs directly and fall back to a stub
+only when `GCP_PROJECT_ID` is unset — there's no commented-out code to uncomment,
+just env values to fill in:
 
 - `src/services/documentAI.service.ts` → Google Cloud Document AI (OCR / extraction).
   Needs `GCP_PROJECT_ID`, `GCP_LOCATION`, `DOC_AI_PROCESSOR_ID`, and a service-account
   key referenced by `GOOGLE_APPLICATION_CREDENTIALS`.
-- `src/services/vertexAI.service.ts` → Vertex AI (Gemini) summaries. Needs
-  `GCP_PROJECT_ID`, `VERTEX_AI_LOCATION`, `VERTEX_AI_MODEL`.
+- `src/services/gemini.service.ts` → Gemini, via the Gemini Enterprise Agent
+  Platform (the 2026 rebrand of Vertex AI — same GCP project/billing, new name;
+  named after the model rather than the platform since the platform's already
+  been renamed once). Needs `GCP_PROJECT_ID`, `VERTEX_AI_LOCATION`, `VERTEX_AI_MODEL`.
 
-The `@google-cloud/documentai` and `@google-cloud/vertexai` SDKs are already installed —
-replace the stub body with the commented implementation and fill in the env values.
+`@google-cloud/documentai` and `@google/genai` are already installed. (`@google/genai`
+is Google's current Node SDK for Gemini access — it replaced the now-removed
+`@google-cloud/vertexai` package, whose `VertexAI` class was deprecated in June 2025
+and dropped from the SDK in June 2026.)

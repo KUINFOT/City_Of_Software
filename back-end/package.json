@@ -6,9 +6,11 @@
   "main": "dist/index.js",
   "scripts": {
     "dev": "tsx watch src/index.ts",
-    "build": "tsc",
+    "build": "tsc -p tsconfig.build.json",
     "start": "node dist/index.js",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "extract": "tsx src/extraction/cli.ts",
+    "test": "node --import tsx --test \"src/**/*.test.ts\""
   },
   "engines": {
     "node": ">=18"
@@ -16,13 +18,15 @@
   "license": "MIT",
   "dependencies": {
     "@google-cloud/documentai": "^10.0.0",
-    "@google-cloud/vertexai": "^1.12.0",
+    "@google/genai": "^1.52.0",
+    "cheerio": "^1.0.0",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^4.22.2",
     "mongoose": "^9.9.2",
     "morgan": "^1.11.0",
-    "multer": "^2.2.0"
+    "multer": "^2.2.0",
+    "node-cron": "^3.0.3"
   },
   "devDependencies": {
     "@types/cors": "^2.8.19",
@@ -30,6 +34,7 @@
     "@types/morgan": "^1.9.10",
     "@types/multer": "^2.2.0",
     "@types/node": "^22.20.1",
+    "@types/node-cron": "^3.0.11",
     "tsx": "^4.23.12",
     "typescript": "^7.0.2"
   }
