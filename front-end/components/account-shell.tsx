@@ -28,7 +28,7 @@ export function AccountShell({ children, allowedRoles }: AccountShellProps) {
       <main className="access-denied">
         <p className="login-kicker">ACCESS RESTRICTED</p>
         <h1>This page is for administrators.</h1>
-        <p>Your signed-in role is <strong>{user.role}</strong>. Switch to the administrator demo account to manage platform users.</p>
+        <p>Your signed-in role is <strong>{user.role}</strong>. Sign in with an administrator account to manage platform users.</p>
         <Link className="button button--primary" href="/dashboard">Return to dashboard</Link>
       </main>
     );
