@@ -4,11 +4,13 @@ const userSchema = new Schema(
   {
     email: { type: String, required: true, unique: true, lowercase: true, trim: true },
     passwordHash: { type: String, required: true },
-    role: { type: String, enum: ['vendor', 'admin', 'public'], default: 'vendor' },
-    name: String,
-    phone: String,
+    role: { type: String, enum: ['vendor', 'reviewer', 'admin', 'public'], default: 'vendor' },
+    name: { type: String, required: true, trim: true },
+    organization: { type: String, required: true, trim: true },
+    phone: { type: String, trim: true },
     emailVerified: { type: Boolean, default: false },
-    status: { type: String, enum: ['active', 'suspended'], default: 'active' },
+    status: { type: String, enum: ['pending_verification', 'active', 'suspended'], default: 'pending_verification' },
+    sessionVersion: { type: Number, default: 0 },
     lastLoginAt: Date,
   },
   { timestamps: true }

@@ -1,88 +1,79 @@
 "use client";
 
 import { createContext, ReactNode, useContext, useEffect, useMemo, useState } from "react";
-import { demoUsers, MockUser } from "@/data/mock-auth";
+import { AuthSession, AuthUser, login, RegistrationResponse, register } from "@/lib/auth-api";
 
-type StoredAccount = MockUser & { password: string };
-type RegistrationInput = { name: string; email: string; password: string; organization: string; role: "vendor" | "reviewer" };
+type RegistrationInput = { name: string; email: string; password: string; organization: string; phone: string; role: "vendor" | "reviewer" };
+type AuthResult = { ok: true; registration?: RegistrationResponse } | { ok: false; message: string };
 
 type AuthContextValue = {
-  user: MockUser | null;
+  user: AuthUser | null;
+  token: string | null;
   ready: boolean;
-  signInAs: (userId: string) => void;
-  signIn: (email: string, password: string) => boolean;
-  register: (input: RegistrationInput) => { ok: true } | { ok: false; message: string };
+  signIn: (email: string, password: string) => Promise<AuthResult>;
+  register: (input: RegistrationInput) => Promise<AuthResult>;
   signOut: () => void;
 };
 
-const STORAGE_KEY = "city-of-software-demo-user";
-const ACCOUNTS_STORAGE_KEY = "city-of-software-local-accounts";
-const seededAccounts: StoredAccount[] = demoUsers.map((user) => ({ ...user, password: "citysoft-demo" }));
+const STORAGE_KEY = "city-of-software-user";
 const AuthContext = createContext<AuthContextValue | null>(null);
 
-function isStoredAccount(value: unknown): value is StoredAccount {
+function isAuthSession(value: unknown): value is AuthSession {
   if (!value || typeof value !== "object") return false;
-  const account = value as Partial<StoredAccount>;
-  return typeof account.id === "string" && typeof account.name === "string" && typeof account.email === "string" && typeof account.organization === "string" && typeof account.password === "string" && (account.role === "vendor" || account.role === "reviewer" || account.role === "admin");
+  const session = value as Partial<AuthSession>;
+  const user = session.user as Partial<AuthUser> | undefined;
+  return typeof session.token === "string" && !!user && typeof user.id === "string" && typeof user.name === "string" && typeof user.email === "string" && typeof user.organization === "string" && typeof user.phone === "string" && (user.role === "vendor" || user.role === "reviewer" || user.role === "admin") && (user.status === "active" || user.status === "suspended");
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<MockUser | null>(null);
-  const [accounts, setAccounts] = useState<StoredAccount[]>(seededAccounts);
+  const [user, setUser] = useState<AuthUser | null>(null);
+  const [token, setToken] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
-    const savedUserId = window.localStorage.getItem(STORAGE_KEY);
     try {
-      const parsed = JSON.parse(window.localStorage.getItem(ACCOUNTS_STORAGE_KEY) ?? "[]") as unknown;
-      const localAccounts = Array.isArray(parsed) ? parsed.filter(isStoredAccount) : [];
-      const availableAccounts = [...seededAccounts, ...localAccounts.filter((account) => !seededAccounts.some((seeded) => seeded.email === account.email))];
-      setAccounts(availableAccounts);
-      setUser(availableAccounts.find((candidate) => candidate.id === savedUserId) ?? null);
+      const storedSession = JSON.parse(window.localStorage.getItem(STORAGE_KEY) ?? "null") as unknown;
+      if (isAuthSession(storedSession)) {
+        setUser(storedSession.user);
+        setToken(storedSession.token);
+      }
     } catch {
-      setUser(seededAccounts.find((candidate) => candidate.id === savedUserId) ?? null);
+      window.localStorage.removeItem(STORAGE_KEY);
     }
     setReady(true);
   }, []);
 
+  const persistSession = (nextSession: AuthSession) => {
+    setUser(nextSession.user);
+    setToken(nextSession.token);
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(nextSession));
+  };
+
   const value = useMemo<AuthContextValue>(() => ({
     user,
+    token,
     ready,
-    signInAs: (userId) => {
-      const selectedUser = accounts.find((candidate) => candidate.id === userId) ?? null;
-      setUser(selectedUser);
-      if (selectedUser) window.localStorage.setItem(STORAGE_KEY, selectedUser.id);
+    signIn: async (email, password) => {
+      try {
+        persistSession(await login({ email, password }));
+        return { ok: true };
+      } catch (error) {
+        return { ok: false, message: error instanceof Error ? error.message : "Unable to sign in." };
+      }
     },
-    signIn: (email, password) => {
-      const selectedUser = accounts.find((candidate) => candidate.email.toLowerCase() === email.trim().toLowerCase() && candidate.password === password) ?? null;
-      if (!selectedUser) return false;
-      setUser(selectedUser);
-      window.localStorage.setItem(STORAGE_KEY, selectedUser.id);
-      return true;
-    },
-    register: (input) => {
-      const email = input.email.trim().toLowerCase();
-      if (accounts.some((candidate) => candidate.email.toLowerCase() === email)) return { ok: false, message: "An account with this email already exists. Please sign in instead." };
-      const newAccount: StoredAccount = {
-        id: `local-${Date.now()}`,
-        name: input.name.trim(),
-        email,
-        password: input.password,
-        organization: input.organization.trim(),
-        role: input.role,
-      };
-      const updatedAccounts = [...accounts, newAccount];
-      setAccounts(updatedAccounts);
-      window.localStorage.setItem(ACCOUNTS_STORAGE_KEY, JSON.stringify(updatedAccounts.filter((account) => !seededAccounts.some((seeded) => seeded.id === account.id))));
-      window.localStorage.setItem(STORAGE_KEY, newAccount.id);
-      setUser(newAccount);
-      return { ok: true };
+    register: async (input) => {
+      try {
+        return { ok: true, registration: await register(input) };
+      } catch (error) {
+        return { ok: false, message: error instanceof Error ? error.message : "Unable to create your account." };
+      }
     },
     signOut: () => {
       window.localStorage.removeItem(STORAGE_KEY);
       setUser(null);
+      setToken(null);
     },
-  }), [accounts, ready, user]);
+  }), [ready, token, user]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
