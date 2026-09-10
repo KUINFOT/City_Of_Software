@@ -19,13 +19,17 @@ const pastContractSchema = new Schema(
 const vendorProfileSchema = new Schema(
   {
     userId: { type: Schema.Types.ObjectId, ref: 'User', required: true, unique: true },
-    companyName: { type: String, required: true },
+    organizationType: { type: String, enum: ['company', 'freelancer'], required: true },
+    companyName: String,
     companyNameEn: String,
     registrationNumber: String,
     companySize: { type: String, enum: ['freelancer', 'small', 'medium', 'large'] },
     foundedYear: Number,
 
     techStack: [String],
+    serviceCategories: [String],
+    yearsExperience: { type: Number, min: 0 },
+    teamSize: { type: Number, min: 1 },
     certifications: [certificationSchema],
     pastContracts: [pastContractSchema],
     totalContractValueThb: { type: Number, default: 0 },
