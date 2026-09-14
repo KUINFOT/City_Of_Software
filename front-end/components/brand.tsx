@@ -7,7 +7,7 @@ export function Brand({ inverse = false }: { inverse?: boolean }) {
       <span className="brand__mark"><Building2 size={19} strokeWidth={1.8} /></span>
       <span className="brand__copy">
         <strong>CITY OF SOFTWARE</strong>
-        <small>BMA TOR PORTAL</small>
+        <small>ระบบค้นหา TOR ของกรุงเทพมหานคร</small>
       </span>
     </Link>
   );

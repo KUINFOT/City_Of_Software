@@ -27,13 +27,15 @@ automatically reloads the browser when source files change.
 | Route | Description |
 | --- | --- |
 | `/` | Public landing page and TOR search |
+| `/browse-tors` | Searchable mock TOR database with filters |
 | `/register` | Supplier / BMA official registration form |
 | `/dashboard` | Supplier dashboard and recommended TORs |
 | `/settings` | Account profile, alerts, and saved searches |
 
 The buttons and forms demonstrate client-side interactions only. For example,
-submitting the hero search opens the dashboard, registration redirects to the
-dashboard after browser validation, and settings can be toggled locally.
+submitting the hero search opens `/browse-tors` with the search keyword in the
+URL, registration redirects to the dashboard after browser validation, and
+settings can be toggled locally.
 
 ## Validate the project
 

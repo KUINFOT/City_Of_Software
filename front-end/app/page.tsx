@@ -3,10 +3,10 @@ import { SiteHeader } from "@/components/site-header";
 import { HeroSearch } from "@/components/hero-search";
 
 const facts = [
-  "142 Active Software TORs",
-  "50 District Divisions",
-  "1.4B Budget Transcribed",
-  "AI Classification Models",
+  "TOR ซอฟต์แวร์ที่เปิดอยู่ 142 รายการ",
+  "50 เขตของกรุงเทพมหานคร",
+  "งบประมาณที่ถอดข้อมูลแล้ว 1.4 พันล้านบาท",
+  "โมเดลจัดหมวดหมู่ด้วย AI",
 ];
 
 export default function Home() {
@@ -25,11 +25,11 @@ export default function Home() {
           ))}
         </div>
         <div className="hero__content">
-          <div className="eyebrow"><BadgeCheck size={15} /> AI-Powered TOR Aggregator &amp; Classifier</div>
-          <h1>Unified Software Procurement<br />Database for Bangkok</h1>
+          <div className="eyebrow"><BadgeCheck size={15} /> ระบบรวบรวมและจัดหมวดหมู่ TOR ด้วย AI</div>
+          <h1>ฐานข้อมูลจัดซื้อจัดจ้างซอฟต์แวร์<br />สำหรับกรุงเทพมหานคร</h1>
           <p>
-            Instant search, automated categorization, and AI translation of software requirements across all<br className="desktop-break" />
-            BMA district websites. Save hours on qualification analysis.
+            ค้นหาได้ทันที จัดหมวดหมู่อัตโนมัติ และแปลความต้องการด้านซอฟต์แวร์ด้วย AI จากเว็บไซต์ของทุกเขตในกรุงเทพมหานคร<br className="desktop-break" />
+            ลดเวลาวิเคราะห์คุณสมบัติของโครงการ
           </p>
           <HeroSearch />
           <div className="hero-facts">

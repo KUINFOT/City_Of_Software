@@ -1,4 +1,6 @@
 import dotenv from 'dotenv';
+import { extractionConfig } from '../extraction/core/config';
+import { gcpConfig } from './gcpConfig';
 
 dotenv.config();
 
@@ -23,11 +25,25 @@ export const env = {
   nodeEnv: optional('NODE_ENV', 'development'),
   corsOrigin: optional('CORS_ORIGIN', 'http://localhost:3000'),
   mongodbUri: required('MONGODB_URI'),
-  gcp: {
-    projectId: optional('GCP_PROJECT_ID'),
-    location: optional('GCP_LOCATION', 'us'),
-    docAiProcessorId: optional('DOC_AI_PROCESSOR_ID'),
-    vertexLocation: optional('VERTEX_AI_LOCATION', 'us-central1'),
-    vertexModel: optional('VERTEX_AI_MODEL', 'gemini-2.0-flash'),
-  },
+  appUrl: optional('APP_URL', 'http://localhost:3000'),
+  publicApiUrl: optional('PUBLIC_API_URL', 'http://localhost:4000/api'),
+  gmailUser: optional('GMAIL_USER'),
+  gmailAppPassword: optional('GMAIL_APP_PASSWORD'),
+  resendApiKey: optional('RESEND_API_KEY'),
+  emailFrom: optional('EMAIL_FROM'),
+  // A development fallback keeps local setup simple; production must provide a
+  // long random secret so signed browser sessions cannot be forged.
+  authSecret: process.env.AUTH_SECRET ?? (process.env.NODE_ENV === 'production' ? required('AUTH_SECRET') : 'city-of-software-development-auth-secret-change-me'),
+  /**
+   * Defined in src/config/gcpConfig.ts so AI-service tests and any future
+   * GCP-only tooling can read it without importing this module, which
+   * requires MONGODB_URI.
+   */
+  gcp: gcpConfig,
+  /**
+   * Extraction pipeline settings. Defined in src/extraction/core/config.ts so
+   * the pipeline's dry-run mode can read them without importing this module,
+   * which requires MONGODB_URI.
+   */
+  extraction: extractionConfig,
 } as const;
