@@ -38,6 +38,10 @@ export const cronConfig = {
   depa: optional('CRON_DEPA', '0 6 * * 1'),
   extractionSweep: optional('CRON_EXTRACTION_SWEEP', '*/30 * * * *'),
   analytics: optional('CRON_ANALYTICS', '0 7 * * *'),
+  // EP-04 SCRUM-97: consolidates daily-digest vendors' queued notifications
+  // into one email. Runs after the other daily jobs so a digest reflects
+  // that day's crawl/extraction activity.
+  digest: optional('CRON_DIGEST', '0 8 * * *'),
 } as const;
 
 export type CronConfig = typeof cronConfig;
@@ -56,6 +60,7 @@ export function validateCronConfig(): void {
     ['CRON_DEPA', cronConfig.depa],
     ['CRON_EXTRACTION_SWEEP', cronConfig.extractionSweep],
     ['CRON_ANALYTICS', cronConfig.analytics],
+    ['CRON_DIGEST', cronConfig.digest],
   ];
   for (const [name, expression] of entries) {
     if (!cron.validate(expression)) {

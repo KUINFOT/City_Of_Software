@@ -7,10 +7,13 @@ import { useAuth } from "@/components/auth-provider";
 import { KeyDatesPanel } from "@/components/tor-detail/key-dates-panel";
 import { ProvenancePanel } from "@/components/tor-detail/provenance-panel";
 import { QualificationMatchPanel } from "@/components/tor-detail/qualification-match-panel";
+import { MatchReasonsPanel } from "@/components/tor-detail/match-reasons-panel";
 import {
+  getMatchReasons,
   getQualificationMatch,
   getTor,
   getTorDocuments,
+  MatchReasonsResult,
   QualificationMatchResult,
   TorDetail,
   TorDocument,
@@ -71,6 +74,10 @@ export function TorDetailClient() {
   const [matchLoading, setMatchLoading] = useState(false);
   const [matchError, setMatchError] = useState<string | null>(null);
 
+  const [reasonsResult, setReasonsResult] = useState<MatchReasonsResult | null>(null);
+  const [reasonsLoading, setReasonsLoading] = useState(false);
+  const [reasonsError, setReasonsError] = useState<string | null>(null);
+
   useEffect(() => {
     let cancelled = false;
     setTorLoading(true);
@@ -103,6 +110,18 @@ export function TorDetailClient() {
       .then((result) => { if (!cancelled) setMatchResult(result); })
       .catch((error: unknown) => { if (!cancelled) setMatchError(error instanceof Error ? error.message : "ไม่สามารถตรวจสอบคุณสมบัติได้ในขณะนี้"); })
       .finally(() => { if (!cancelled) setMatchLoading(false); });
+    return () => { cancelled = true; };
+  }, [viewerRole, token, torId]);
+
+  useEffect(() => {
+    if (viewerRole !== "vendor" || !token) return;
+    let cancelled = false;
+    setReasonsLoading(true);
+    setReasonsError(null);
+    getMatchReasons(torId, token)
+      .then((result) => { if (!cancelled) setReasonsResult(result); })
+      .catch((error: unknown) => { if (!cancelled) setReasonsError(error instanceof Error ? error.message : "ไม่สามารถตรวจสอบเหตุผลที่ตรงกันได้ในขณะนี้"); })
+      .finally(() => { if (!cancelled) setReasonsLoading(false); });
     return () => { cancelled = true; };
   }, [viewerRole, token, torId]);
 
@@ -164,6 +183,12 @@ export function TorDetailClient() {
           loading={matchLoading}
           error={matchError}
           result={matchResult}
+        />
+        <MatchReasonsPanel
+          viewerRole={viewerRole ?? "guest"}
+          loading={reasonsLoading}
+          error={reasonsError}
+          result={reasonsResult}
         />
       </div>
 

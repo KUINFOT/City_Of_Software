@@ -6,6 +6,7 @@ import { EXTRACTED_FIELD_KEYS, FIELD_TO_TOR_PATH } from '../extraction/core/fiel
 import { extractionConfig } from '../extraction/core/config';
 import { computeKeyDates } from '../analytics/keyDates';
 import { matchQualifications } from '../matching/qualificationMatch';
+import { computeMatchReasons } from '../matching/matchReasons';
 import { createDocumentAccessToken } from '../services/documentAccess.service';
 import type { AuthenticatedRequest } from '../middleware/auth.middleware';
 
@@ -167,6 +168,34 @@ export async function getQualificationMatch(req: Request, res: Response, next: N
     const vendorProfile = await VendorProfileModel.findOne({ userId: authUser.id }).lean();
 
     res.json(matchQualifications(tor.qualifications, vendorProfile));
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * GET /api/tors/:id/match-reasons — EP-04 SCRUM-100/101. Live-computed
+ * on-demand for the TOR detail page, mirroring getQualificationMatch's
+ * pattern exactly (published-only guard, vendor-only via requireVendor).
+ * The stored, snapshotted version of these reasons lives on Notification
+ * rows created at stage-transition time (see notifications/dispatch.ts) —
+ * this endpoint answers the same question live, for a TOR that may not have
+ * triggered a notification (e.g. the vendor's profile changed since).
+ */
+export async function getMatchReasons(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const tor = await TorModel.findOne({ _id: req.params.id, status: 'published' })
+      .select('technologies projectType budget.amountThb agencyId agencyName')
+      .lean();
+    if (!tor) {
+      res.status(404).json({ error: 'TOR not found' });
+      return;
+    }
+
+    const authUser = (req as AuthenticatedRequest).authUser;
+    const vendorProfile = await VendorProfileModel.findOne({ userId: authUser.id }).lean();
+
+    res.json(computeMatchReasons(tor, vendorProfile));
   } catch (err) {
     next(err);
   }

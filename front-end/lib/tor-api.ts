@@ -82,6 +82,10 @@ export type QualificationMatchResult = {
   overallStatus: 'all_met' | 'gaps_found' | 'undetermined' | 'no_requirements';
 };
 
+export type MatchReasonType = 'technology' | 'project_type' | 'budget' | 'agency';
+export type MatchReason = { type: MatchReasonType; label: string; detail: string };
+export type MatchReasonsResult = { score: number; reasons: MatchReason[] };
+
 const apiBaseUrl = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000/api';
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -102,4 +106,8 @@ export async function getTorDocuments(id: string): Promise<TorDocument[]> {
 
 export function getQualificationMatch(id: string, token: string): Promise<QualificationMatchResult> {
   return request(`/tors/${id}/qualification-match`, { headers: { Authorization: `Bearer ${token}` } });
+}
+
+export function getMatchReasons(id: string, token: string): Promise<MatchReasonsResult> {
+  return request(`/tors/${id}/match-reasons`, { headers: { Authorization: `Bearer ${token}` } });
 }

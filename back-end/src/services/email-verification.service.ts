@@ -1,9 +1,9 @@
 import { createHash, randomBytes } from 'node:crypto';
-import nodemailer from 'nodemailer';
 import { env } from '../config/env';
 import { EmailVerificationModel } from '../models/EmailVerification';
 import { PasswordResetModel } from '../models/PasswordReset';
 import { createPendingRegistrationToken, PendingRegistration } from './pending-registration.service';
+import { sendEmail } from './email.service';
 
 const TOKEN_TTL_MS = 24 * 60 * 60 * 1000;
 
@@ -24,55 +24,26 @@ function resetUrl(token: string): string { return `${env.appUrl}/reset-password?
 
 async function deliverVerificationEmail(email: string, token: string): Promise<void> {
   const url = verificationUrl(token);
-  if (env.gmailUser && env.gmailAppPassword) {
-    const transporter = nodemailer.createTransport({
-      service: 'gmail',
-      auth: {
-        user: env.gmailUser,
-        pass: env.gmailAppPassword.replace(/\s/g, ''),
-      },
-    });
-    await transporter.sendMail({
-      from: `City of Software <${env.gmailUser}>`,
-      to: email,
-      subject: 'Verify your City of Software email address',
-      text: `Welcome to City of Software. Verify your email address: ${url}\n\nThis link expires in 24 hours.`,
-      html: `<p>Welcome to City of Software.</p><p><a href="${url}">Verify your email address</a></p><p>This link expires in 24 hours.</p>`,
-    });
-    return;
-  }
-  if (!env.resendApiKey || !env.emailFrom) {
-    if (env.nodeEnv === 'production') throw new Error('Email delivery is not configured.');
-    console.info(`[email verification] Development link for ${email}: ${url}`);
-    return;
-  }
-
-  const response = await fetch('https://api.resend.com/emails', {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${env.resendApiKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      from: env.emailFrom,
-      to: [email],
-      subject: 'Verify your City of Software email address',
-      html: `<p>Welcome to City of Software.</p><p><a href="${url}">Verify your email address</a></p><p>This link expires in 24 hours.</p>`,
-    }),
+  await sendEmail({
+    to: email,
+    subject: 'Verify your City of Software email address',
+    text: `Welcome to City of Software. Verify your email address: ${url}\n\nThis link expires in 24 hours.`,
+    html: `<p>Welcome to City of Software.</p><p><a href="${url}">Verify your email address</a></p><p>This link expires in 24 hours.</p>`,
   });
-  if (!response.ok) throw new Error('Email delivery provider rejected the verification email.');
 }
 
+// Previously had no Resend fallback (Gmail-or-dev-log only), unlike
+// deliverVerificationEmail — a Resend-only production config would silently
+// fail every password reset. Routing through the shared sendEmail() fixes
+// that as a side effect of removing the duplication.
 async function deliverPasswordResetEmail(email: string, token: string): Promise<void> {
   const url = resetUrl(token);
-  const message = 'Reset your City of Software password';
-  if (env.gmailUser && env.gmailAppPassword) {
-    const transporter = nodemailer.createTransport({ service: 'gmail', auth: { user: env.gmailUser, pass: env.gmailAppPassword.replace(/\s/g, '') } });
-    await transporter.sendMail({ from: `City of Software <${env.gmailUser}>`, to: email, subject: message, text: `Reset your password: ${url}\n\nThis link expires in 1 hour.`, html: `<p><a href="${url}">Reset your password</a></p><p>This link expires in 1 hour.</p>` });
-    return;
-  }
-  if (env.nodeEnv === 'production') throw new Error('Email delivery is not configured.');
-  console.info(`[password reset] Development link for ${email}: ${url}`);
+  await sendEmail({
+    to: email,
+    subject: 'Reset your City of Software password',
+    text: `Reset your password: ${url}\n\nThis link expires in 1 hour.`,
+    html: `<p><a href="${url}">Reset your password</a></p><p>This link expires in 1 hour.</p>`,
+  });
 }
 
 export async function issueVerificationEmail(userId: string, email: string): Promise<void> {

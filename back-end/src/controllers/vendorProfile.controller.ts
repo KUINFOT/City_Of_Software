@@ -9,6 +9,18 @@ function numberOrUndefined(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : undefined;
 }
 
+/**
+ * Only `frequency` is wired through today (EP-04 SCRUM-96 only asks for an
+ * instant-vs-daily-digest choice). `notificationPrefs.channels`/
+ * `minMatchScore` already exist on the VendorProfile schema for future use
+ * but have no settings-page UI yet, so they're deliberately not accepted
+ * here — silently accepting fields nothing can set from the UI would just
+ * invite drift between what the API allows and what a user can express.
+ */
+function notificationFrequencyOrUndefined(value: unknown): 'instant' | 'daily_digest' | undefined {
+  return value === 'instant' || value === 'daily_digest' ? value : undefined;
+}
+
 /** GET /api/vendor-profiles/:userId — read one vendor's self-declared profile. */
 export async function getVendorProfile(req: Request, res: Response): Promise<void> {
   const profile = await VendorProfileModel.findOne({ userId: req.params.userId });
@@ -35,7 +47,13 @@ export function buildVendorProfileUpdate(body: Record<string, unknown>) {
       ? (body.certifications as Array<{ name?: unknown; issuer?: unknown }>).filter((item) => typeof item?.name === 'string').map((item) => ({ name: (item.name as string).trim(), issuer: typeof item.issuer === 'string' ? item.issuer.trim() : '' }))
       : [],
     totalContractValueThb: numberOrUndefined(body.totalContractValueThb) ?? 0,
-  };
+  } as Record<string, unknown>;
+
+  const frequency = notificationFrequencyOrUndefined(
+    (body.notificationPrefs as Record<string, unknown> | undefined)?.frequency
+  );
+  if (frequency) update['notificationPrefs.frequency'] = frequency;
+
   return update;
 }
 

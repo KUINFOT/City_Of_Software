@@ -21,8 +21,8 @@ export default function SettingsPage() {
   const [searches, setSearches] = useState(initialSearches);
   const [saved, setSaved] = useState(false);
   const [profileError, setProfileError] = useState("");
-  const [profile, setProfile] = useState<VendorProfile>({ organizationType: "company", companyName: user?.organization ?? "", techStack: [], serviceCategories: [], certifications: [] });
-  useEffect(() => { if (user?.id && user.role === "vendor") getVendorProfile(user.id).then((savedProfile) => { if (savedProfile) setProfile(savedProfile); }).catch(() => setProfileError("ไม่สามารถโหลดโปรไฟล์คุณสมบัติได้")); }, [user?.id, user?.role]);
+  const [profile, setProfile] = useState<VendorProfile>({ organizationType: "company", companyName: user?.organization ?? "", techStack: [], serviceCategories: [], certifications: [], notificationPrefs: { frequency: "instant" } });
+  useEffect(() => { if (user?.id && user.role === "vendor") getVendorProfile(user.id).then((savedProfile) => { if (savedProfile) setProfile({ notificationPrefs: { frequency: "instant" }, ...savedProfile }); }).catch(() => setProfileError("ไม่สามารถโหลดโปรไฟล์คุณสมบัติได้")); }, [user?.id, user?.role]);
   async function saveProfile() {
     if (!user?.id || user.role !== "vendor") return;
     setProfileError("");
@@ -51,6 +51,21 @@ export default function SettingsPage() {
           {user?.role === "vendor" && <section className="settings-card" id="profile"><h2>โปรไฟล์คุณสมบัติผู้ขาย</h2><p>ข้อมูลคุณสมบัติทั้งหมดเป็น <strong>ข้อมูลที่ผู้ใช้ระบุเอง</strong> และจะไม่แสดงว่าได้รับการยืนยัน</p><div className="form-grid"><label className="form-field">ประเภทองค์กร<select value={profile.organizationType} onChange={(event) => setProfile((current) => ({ ...current, organizationType: event.target.value as "company" | "freelancer" }))}><option value="company">บริษัท</option><option value="freelancer">ฟรีแลนซ์</option></select></label>{profile.organizationType === "company" && <label className="form-field">ชื่อบริษัท<input value={profile.companyName} onChange={(event) => setProfile((current) => ({ ...current, companyName: event.target.value }))} /></label>}<label className="form-field">ประสบการณ์ (ปี)<input type="number" min="0" value={profile.yearsExperience ?? ""} onChange={(event) => setProfile((current) => ({ ...current, yearsExperience: event.target.value ? Number(event.target.value) : undefined }))} /></label><label className="form-field">จำนวนสมาชิกทีม<input type="number" min="1" value={profile.teamSize ?? ""} onChange={(event) => setProfile((current) => ({ ...current, teamSize: event.target.value ? Number(event.target.value) : undefined }))} /></label><label className="form-field">มูลค่าสัญญาที่ผ่านมา (บาท)<input type="number" min="0" value={profile.totalContractValueThb ?? ""} onChange={(event) => setProfile((current) => ({ ...current, totalContractValueThb: event.target.value ? Number(event.target.value) : undefined }))} /></label></div><label className="form-field">เทคโนโลยีที่ใช้ (คั่นด้วยจุลภาค)<input value={profile.techStack.join(", ")} onChange={(event) => setProfile((current) => ({ ...current, techStack: event.target.value.split(",").map((item) => item.trim()).filter(Boolean) }))} placeholder="React, Node.js, MongoDB" /></label><label className="form-field">หมวดหมู่บริการ (คั่นด้วยจุลภาค)<input value={profile.serviceCategories.join(", ")} onChange={(event) => setProfile((current) => ({ ...current, serviceCategories: event.target.value.split(",").map((item) => item.trim()).filter(Boolean) }))} placeholder="เว็บแอปพลิเคชัน, วิเคราะห์ข้อมูล" /></label><label className="form-field">ใบรับรอง (คั่นด้วยจุลภาค)<input value={profile.certifications.map((item) => item.name).join(", ")} onChange={(event) => setProfile((current) => ({ ...current, certifications: event.target.value.split(",").map((name) => name.trim()).filter(Boolean).map((name) => ({ name, issuer: "" })) }))} placeholder="ISO 27001, AWS Certified" /></label>{profileError && <p className="register-error" role="alert">{profileError}</p>}</section>}
           <section className="settings-card" id="notifications">
             <h2>การประมวลผลและการแจ้งเตือนจาก AI</h2>
+            {user?.role === "vendor" && (
+              <div className="form-field" style={{ marginBottom: "1rem" }}>
+                <label htmlFor="notification-frequency">ความถี่ในการแจ้งเตือนเมื่อพบโครงการที่ตรงกับคุณ</label>
+                <select
+                  id="notification-frequency"
+                  value={profile.notificationPrefs?.frequency ?? "instant"}
+                  onChange={(event) =>
+                    setProfile((current) => ({ ...current, notificationPrefs: { frequency: event.target.value as "instant" | "daily_digest" } }))
+                  }
+                >
+                  <option value="instant">แจ้งเตือนทันทีทุกครั้งที่พบโครงการที่ตรงกัน</option>
+                  <option value="daily_digest">สรุปรวมส่งวันละครั้ง</option>
+                </select>
+              </div>
+            )}
             {notificationLabels.map(([title, description], index) => (
               <div className="toggle-row" key={title}><Toggle checked={toggles[index]} onChange={() => setToggles((current) => current.map((value, i) => i === index ? !value : value))} /><div><strong>{title}</strong><p>{description}</p></div></div>
             ))}

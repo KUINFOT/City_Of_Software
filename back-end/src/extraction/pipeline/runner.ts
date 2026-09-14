@@ -44,6 +44,7 @@ import { normalize } from './normalize';
 import { storeAttachments } from './attachments';
 import { checkForDuplicates } from './duplicateCheck';
 import { LocalBlobStore, type BlobStore } from './storage';
+import { handleStageTransition } from '../../notifications/stageTransition';
 
 const DEFAULT_OPTIONS: AdapterOptions = {
   maxPages: 3,
@@ -288,7 +289,7 @@ export async function runSource(
       const upsert = normalize(listing, source, agencyId, new Date());
 
       const existing = await TorModel.findOne({ 'sourceRef.identityKey': upsert.identityKey })
-        .select('_id sourceRef.contentHash')
+        .select('_id sourceRef.contentHash status lifecycle.stage')
         .lean();
 
       let torId: Types.ObjectId;
@@ -322,6 +323,21 @@ export async function runSource(
         } else {
           await TorModel.updateOne({ _id: torId }, { $set: upsert.set });
           updated += 1;
+
+          // Stage-transition notifications (EP-04, SCRUM-91/94/95) — gated on
+          // the record already being published (vendors must never learn
+          // about a TOR still under review), and only when lifecycle.stage
+          // actually changed. Its own try/catch: a notification failure must
+          // not skip attachment storage below for this same listing.
+          const previous = existing as { status?: string; lifecycle?: { stage?: string } };
+          const nextStage = upsert.set['lifecycle.stage'] as string | undefined;
+          if (previous.status === 'published' && nextStage && nextStage !== previous.lifecycle?.stage) {
+            try {
+              await handleStageTransition(torId, { from: previous.lifecycle?.stage ?? null, to: nextStage }, logger);
+            } catch (err) {
+              logger.warn(`stage-transition notification failed for "${listing.title.slice(0, 60)}": ${(err as Error).message}`);
+            }
+          }
         }
       }
 
