@@ -3,6 +3,31 @@ import { gcpConfig } from '../config/gcpConfig';
 import { ExtractionResult } from '../types/document';
 
 /**
+ * Lazily-constructed, memoized client — mirrors gemini.service.ts's
+ * `getClient()`, same reasoning: this is called once per document in a
+ * batch sweep, not once per call.
+ *
+ * Document AI REQUIRES a regional API endpoint (`{location}-documentai
+ * .googleapis.com`) for any call whose resource path names a location —
+ * the client's default global endpoint only happens to route correctly for
+ * a couple of locations and 404s/INVALID_ARGUMENTs for the rest. Confirmed
+ * by live testing (2026-09-14): the default client construction worked
+ * against neither `us` (processor genuinely wasn't there) nor
+ * `asia-southeast1` (processor WAS there, but every call still failed with
+ * "Request contains an invalid argument" until this endpoint was set
+ * explicitly) — this is not optional configuration for a non-`us` region.
+ */
+let client: DocumentProcessorServiceClient | null = null;
+function getClient(): DocumentProcessorServiceClient {
+  if (!client) {
+    client = new DocumentProcessorServiceClient({
+      apiEndpoint: `${gcpConfig.location}-documentai.googleapis.com`,
+    });
+  }
+  return client;
+}
+
+/**
  * Extracts text from a document using Google Cloud Document AI (OCR + parsing).
  *
  * FR-EXT-01: detect whether a document is machine-readable or needs OCR, and
@@ -42,12 +67,11 @@ export async function extractText(buffer: Buffer, mimeType: string): Promise<Ext
     };
   }
 
-  const client = new DocumentProcessorServiceClient();
   const name =
     `projects/${gcpConfig.projectId}/locations/${gcpConfig.location}` +
     `/processors/${gcpConfig.docAiProcessorId}`;
 
-  const [result] = await client.processDocument({
+  const [result] = await getClient().processDocument({
     name,
     rawDocument: { content: buffer.toString('base64'), mimeType },
   });

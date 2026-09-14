@@ -22,6 +22,7 @@ import { EXTRACTION_PROMPT_VERSION, type ExtractedFieldKey, type FieldExtraction
 import { asComplexity, asDate, asNumber, asString, asStringArray } from '../core/fieldCoercion';
 import { decideRouting } from '../core/reviewRouting';
 import { extractionConfig } from '../core/config';
+import { gcpConfig } from '../../config/gcpConfig';
 import { createLogger, type Logger } from '../core/logger';
 import { LocalBlobStore, type BlobStore } from './storage';
 
@@ -196,10 +197,12 @@ async function processDocument(document: DocumentLike, store: BlobStore, logger:
 }
 
 function extractModelVersionLabel(): string {
-  // Kept as a small indirection point: if model selection ever needs to be
-  // read per-call (e.g. from a request) rather than from static config, this
-  // is the one place to change.
-  return process.env.VERTEX_AI_MODEL || 'gemini-2.0-flash';
+  // Reads gcpConfig rather than process.env directly, so this label can
+  // never drift from the model actually used by gemini.service.ts's own
+  // client construction — two independently hardcoded fallbacks here and
+  // in gcpConfig.ts previously disagreed (gemini-2.0-flash vs the real
+  // working default), which this single-source-of-truth read prevents.
+  return gcpConfig.vertexModel;
 }
 
 function fieldConfidenceMap(fields: Record<ExtractedFieldKey, FieldExtraction>): Map<string, number> {
