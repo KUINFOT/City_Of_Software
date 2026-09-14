@@ -28,6 +28,7 @@ const adapters: Adapter[] = [
 ];
 
 const statusClass: Record<AdapterStatus, string> = { Healthy: "healthy", Delayed: "delayed", "Needs attention": "needs-attention" };
+const statusLabels: Record<"All" | AdapterStatus, string> = { All: "ทั้งหมด", Healthy: "ปกติ", Delayed: "ล่าช้า", "Needs attention": "ต้องตรวจสอบ" };
 
 export default function AdapterHealthPage() {
   const [filter, setFilter] = useState<"All" | AdapterStatus>("All");
@@ -41,40 +42,40 @@ export default function AdapterHealthPage() {
     setRefreshing(true);
     window.setTimeout(() => {
       setRefreshing(false);
-      recordEvent({ category: "Adapter health", action: "Refreshed health snapshot", target: "All agency adapters", details: "A browser-only adapter status refresh was requested." });
+      recordEvent({ category: "Adapter health", action: "รีเฟรชสถานะตัวเชื่อมต่อ", target: "ตัวเชื่อมต่อทุกหน่วยงาน", details: "มีการขอรีเฟรชสถานะตัวเชื่อมต่อในเบราว์เซอร์" });
     }, 700);
   }
 
   return (
     <AccountShell allowedRoles={["admin"]}>
       <header className="account-header adapter-health__header">
-        <div><p className="login-kicker">ADAPTER OBSERVABILITY</p><h1>Agency Adapter Health</h1><p>See whether each configured agency adapter can collect its source site on schedule.</p></div>
-        <button className="button button--secondary" type="button" onClick={refreshSnapshot} disabled={refreshing}><RefreshCw size={16} className={refreshing ? "spin" : ""} /> {refreshing ? "Refreshing…" : "Refresh snapshot"}</button>
+        <div><p className="login-kicker">การติดตามตัวเชื่อมต่อ</p><h1>สถานะตัวเชื่อมต่อหน่วยงาน</h1><p>ดูว่าตัวเชื่อมต่อของแต่ละหน่วยงานสามารถรวบรวมข้อมูลจากเว็บไซต์ตามกำหนดได้หรือไม่</p></div>
+        <button className="button button--secondary" type="button" onClick={refreshSnapshot} disabled={refreshing}><RefreshCw size={16} className={refreshing ? "spin" : ""} /> {refreshing ? "กำลังรีเฟรช…" : "รีเฟรชสถานะ"}</button>
       </header>
 
-      <section className="adapter-summary" aria-label="Adapter health summary">
-        <article><Activity size={20} /><div><strong>4</strong><span>Configured adapters</span></div></article>
-        <article><CheckCircle2 size={20} /><div><strong>2</strong><span>Healthy and on schedule</span></div></article>
-        <article><AlertTriangle size={20} /><div><strong>2</strong><span>Require attention</span></div></article>
+      <section className="adapter-summary" aria-label="สรุปสถานะตัวเชื่อมต่อ">
+        <article><Activity size={20} /><div><strong>4</strong><span>ตัวเชื่อมต่อที่ตั้งค่าแล้ว</span></div></article>
+        <article><CheckCircle2 size={20} /><div><strong>2</strong><span>ปกติและทำงานตามกำหนด</span></div></article>
+        <article><AlertTriangle size={20} /><div><strong>2</strong><span>ต้องตรวจสอบ</span></div></article>
       </section>
 
       <section className="adapter-health__panel">
-        <div className="adapter-health__toolbar"><div><h2>Adapter status</h2><p>Data is a browser-only monitoring preview.</p></div><div className="adapter-filter" aria-label="Filter adapter status">{(["All", "Healthy", "Delayed", "Needs attention"] as const).map((status) => <button key={status} type="button" className={filter === status ? "active" : ""} onClick={() => setFilter(status)}>{status}</button>)}</div></div>
+        <div className="adapter-health__toolbar"><div><h2>สถานะตัวเชื่อมต่อ</h2><p>ข้อมูลเป็นตัวอย่างการติดตามในเบราว์เซอร์เท่านั้น</p></div><div className="adapter-filter" aria-label="กรองสถานะตัวเชื่อมต่อ">{(["All", "Healthy", "Delayed", "Needs attention"] as const).map((status) => <button key={status} type="button" className={filter === status ? "active" : ""} onClick={() => setFilter(status)}>{statusLabels[status]}</button>)}</div></div>
         <div className="adapter-list">
           {visibleAdapters.map((adapter) => <article key={adapter.id}>
             <div className={`adapter-status-dot adapter-status-dot--${statusClass[adapter.status]}`} />
             <div className="adapter-list__name"><strong>{adapter.agency}</strong><span>{adapter.endpoint}</span></div>
-            <div><small>LAST SUCCESS</small><strong>{adapter.lastSuccess}</strong></div>
-            <div><small>RESPONSE TIME</small><strong>{adapter.responseTime}</strong></div>
-            <span className={`agency-health agency-health--${statusClass[adapter.status]}`}>{adapter.status}</span>
-            <button type="button" onClick={() => { setSelectedId(adapter.id); recordEvent({ category: "Adapter health", action: "Viewed adapter detail", target: adapter.agency, details: "Administrator opened the adapter health detail panel." }); }}>View details <ChevronRight size={14} /></button>
+            <div><small>สำเร็จล่าสุด</small><strong>{adapter.lastSuccess}</strong></div>
+            <div><small>เวลาตอบสนอง</small><strong>{adapter.responseTime}</strong></div>
+            <span className={`agency-health agency-health--${statusClass[adapter.status]}`}>{statusLabels[adapter.status]}</span>
+            <button type="button" onClick={() => { setSelectedId(adapter.id); recordEvent({ category: "Adapter health", action: "ดูรายละเอียดตัวเชื่อมต่อ", target: adapter.agency, details: "ผู้ดูแลเปิดหน้ารายละเอียดสถานะตัวเชื่อมต่อ" }); }}>ดูรายละเอียด <ChevronRight size={14} /></button>
           </article>)}
         </div>
       </section>
 
-      <Link className="adapter-schedule-link" href="/admin/agency-monitor"><RadioTower size={16} /><span><strong>Need to change a cadence or pause an adapter?</strong><small>Open agency monitoring schedule</small></span><ChevronRight size={16} /></Link>
+      <Link className="adapter-schedule-link" href="/admin/agency-monitor"><RadioTower size={16} /><span><strong>ต้องการเปลี่ยนรอบตรวจสอบหรือหยุดตัวเชื่อมต่อ?</strong><small>เปิดหน้ากำหนดการติดตามหน่วยงาน</small></span><ChevronRight size={16} /></Link>
 
-      {selected && <div className="invite-backdrop" role="presentation" onMouseDown={() => setSelectedId(null)}><section className="adapter-detail" role="dialog" aria-modal="true" aria-labelledby="adapter-detail-title" onMouseDown={(event) => event.stopPropagation()}><div className="adapter-detail__icon"><ServerCrash size={20} /></div><p className="login-kicker">ADAPTER CHECK DETAIL</p><h2 id="adapter-detail-title">{selected.agency}</h2><span className={`agency-health agency-health--${statusClass[selected.status]}`}>{selected.status}</span><p>{selected.detail}</p><dl><div><dt>Next check</dt><dd>{selected.nextCheck}</dd></div><div><dt>Items processed today</dt><dd>{selected.processedToday}</dd></div></dl><button className="button button--primary" type="button" onClick={() => setSelectedId(null)}>Close details</button></section></div>}
+      {selected && <div className="invite-backdrop" role="presentation" onMouseDown={() => setSelectedId(null)}><section className="adapter-detail" role="dialog" aria-modal="true" aria-labelledby="adapter-detail-title" onMouseDown={(event) => event.stopPropagation()}><div className="adapter-detail__icon"><ServerCrash size={20} /></div><p className="login-kicker">รายละเอียดการตรวจสอบตัวเชื่อมต่อ</p><h2 id="adapter-detail-title">{selected.agency}</h2><span className={`agency-health agency-health--${statusClass[selected.status]}`}>{statusLabels[selected.status]}</span><p>{selected.detail}</p><dl><div><dt>ตรวจสอบครั้งถัดไป</dt><dd>{selected.nextCheck}</dd></div><div><dt>รายการที่ประมวลผลวันนี้</dt><dd>{selected.processedToday}</dd></div></dl><button className="button button--primary" type="button" onClick={() => setSelectedId(null)}>ปิดรายละเอียด</button></section></div>}
     </AccountShell>
   );
 }

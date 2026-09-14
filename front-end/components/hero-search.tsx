@@ -5,11 +5,11 @@ export function HeroSearch() {
     <form className="hero-search" action="/browse-tors" method="get">
       <Search size={21} />
       <input
-        aria-label="Search TORs"
+        aria-label="ค้นหา TOR"
         name="q"
-        placeholder="Search ‘AI Cloud, Cybersecurity, Smart City software...’"
+        placeholder="ค้นหา เช่น ‘AI Cloud, Cybersecurity, Smart City...’"
       />
-      <button className="button button--orange" type="submit">Search TORs</button>
+      <button className="button button--orange" type="submit">ค้นหา TOR</button>
     </form>
   );
 }

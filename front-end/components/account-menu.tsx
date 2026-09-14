@@ -39,11 +39,11 @@ export function AccountMenu({ compact = false }: { compact?: boolean }) {
       </button>
       {menuOpen && <div className="header-account__menu" role="menu">
         <div className="header-account__summary"><strong>{user.name}</strong><span>{user.email}</span></div>
-        <Link href="/dashboard" role="menuitem" onClick={() => setMenuOpen(false)}><Gauge size={15} /> Dashboard</Link>
-        <Link href="/settings" role="menuitem" onClick={() => setMenuOpen(false)}><Settings size={15} /> Account settings</Link>
-        {user.role === "admin" && <><span className="header-account__divider" /><Link href="/admin/agency-monitor" role="menuitem" onClick={() => setMenuOpen(false)}><RadioTower size={15} /> Agency monitoring</Link><Link href="/admin/adapter-health" role="menuitem" onClick={() => setMenuOpen(false)}><Activity size={15} /> Adapter health</Link><Link href="/admin/accounts" role="menuitem" onClick={() => setMenuOpen(false)}><ShieldCheck size={15} /> Account &amp; roles</Link><Link href="/admin/audit-log" role="menuitem" onClick={() => setMenuOpen(false)}><History size={15} /> Audit trail</Link><Link href="/admin/export-repository" role="menuitem" onClick={() => setMenuOpen(false)}><HardDriveDownload size={15} /> Export repository</Link></>}
+        <Link href="/dashboard" role="menuitem" onClick={() => setMenuOpen(false)}><Gauge size={15} /> แดชบอร์ด</Link>
+        <Link href="/settings" role="menuitem" onClick={() => setMenuOpen(false)}><Settings size={15} /> ตั้งค่าบัญชี</Link>
+        {user.role === "admin" && <><span className="header-account__divider" /><Link href="/admin/agency-monitor" role="menuitem" onClick={() => setMenuOpen(false)}><RadioTower size={15} /> ติดตามหน่วยงาน</Link><Link href="/admin/adapter-health" role="menuitem" onClick={() => setMenuOpen(false)}><Activity size={15} /> สถานะตัวเชื่อมต่อ</Link><Link href="/admin/accounts" role="menuitem" onClick={() => setMenuOpen(false)}><ShieldCheck size={15} /> บัญชีและบทบาท</Link><Link href="/admin/audit-log" role="menuitem" onClick={() => setMenuOpen(false)}><History size={15} /> ประวัติการตรวจสอบ</Link><Link href="/admin/export-repository" role="menuitem" onClick={() => setMenuOpen(false)}><HardDriveDownload size={15} /> ส่งออกข้อมูล</Link></>}
         <span className="header-account__divider" />
-        <button type="button" role="menuitem" onClick={() => { setMenuOpen(false); signOut(); router.push("/"); }}><LogOut size={15} /> Sign out</button>
+        <button type="button" role="menuitem" onClick={() => { setMenuOpen(false); signOut(); router.push("/"); }}><LogOut size={15} /> ออกจากระบบ</button>
       </div>}
     </div>
   );

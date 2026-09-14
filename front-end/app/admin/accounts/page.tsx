@@ -8,9 +8,9 @@ import { listManagedUsers, ManagedUser, updateManagedUser } from "@/lib/auth-api
 import { useAuth } from "@/components/auth-provider";
 
 const roleDescriptions: Record<AppRole, string> = {
-  vendor: "Browse opportunities and manage supplier preferences",
-  reviewer: "Review extracted data before a posting is published",
-  admin: "Manage platform users, roles, and operational access",
+  vendor: "ค้นหาโครงการและจัดการความสนใจของผู้ขาย",
+  reviewer: "ตรวจสอบข้อมูลที่ระบบสกัดก่อนเผยแพร่",
+  admin: "จัดการผู้ใช้ บทบาท และสิทธิ์การเข้าถึงแพลตฟอร์ม",
 };
 
 type PendingChange = {
@@ -31,11 +31,11 @@ export default function AccountManagementPage() {
   }), [users]);
 
   async function loadUsers() {
-    if (!token) { setLoading(false); setError("Your sign-in session has expired. Please sign in again."); return; }
+    if (!token) { setLoading(false); setError("เซสชันเข้าสู่ระบบหมดอายุ โปรดเข้าสู่ระบบอีกครั้ง"); return; }
     setLoading(true); setError("");
     try { setUsers((await listManagedUsers(token)).users); }
     catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "Unable to load platform users.");
+      setError(requestError instanceof Error ? requestError.message : "ไม่สามารถโหลดรายชื่อผู้ใช้ได้");
     } finally { setLoading(false); }
   }
 
@@ -48,7 +48,7 @@ export default function AccountManagementPage() {
       const { user } = await updateManagedUser(token, id, changes);
       setUsers((current) => current.map((item) => item.id === id ? user : item));
     } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "Unable to update this account.");
+      setError(requestError instanceof Error ? requestError.message : "ไม่สามารถอัปเดตบัญชีนี้ได้");
     } finally { setUpdatingId(""); }
   }
 
@@ -68,42 +68,42 @@ export default function AccountManagementPage() {
     <AccountShell allowedRoles={["admin"]}>
       <header className="account-header role-management__header">
         <div>
-          <p className="login-kicker">ADMINISTRATION</p>
-          <h1>Account &amp; Role Management</h1>
-          <p>Manage real platform accounts, roles, and access stored in the platform database.</p>
+          <p className="login-kicker">ผู้ดูแลระบบ</p>
+          <h1>จัดการบัญชีและบทบาท</h1>
+          <p>จัดการบัญชี บทบาท และสิทธิ์การเข้าถึงที่จัดเก็บในฐานข้อมูลของแพลตฟอร์ม</p>
         </div>
-        <button className="button button--primary" type="button" onClick={loadUsers} disabled={loading}><RefreshCw className={loading ? "spin" : ""} size={16} /> Refresh</button>
+        <button className="button button--primary" type="button" onClick={loadUsers} disabled={loading}><RefreshCw className={loading ? "spin" : ""} size={16} /> รีเฟรช</button>
       </header>
 
-      {error && <div className="role-management__notice role-management__notice--error" role="alert">{error}<button type="button" onClick={() => setError("")}>Dismiss</button></div>}
+      {error && <div className="role-management__notice role-management__notice--error" role="alert">{error}<button type="button" onClick={() => setError("")}>ปิด</button></div>}
 
-      <section className="role-metrics" aria-label="User account summary">
-        <article><UsersRound size={18} /><div><small>TOTAL ACCOUNTS</small><strong>{users.length}</strong></div></article>
-        <article><UserCheck size={18} /><div><small>ACTIVE USERS</small><strong>{counts.active}</strong></div></article>
-        <article><ShieldCheck size={18} /><div><small>PENDING VERIFICATION</small><strong>{counts.pending}</strong></div></article>
+      <section className="role-metrics" aria-label="สรุปบัญชีผู้ใช้">
+        <article><UsersRound size={18} /><div><small>บัญชีทั้งหมด</small><strong>{users.length}</strong></div></article>
+        <article><UserCheck size={18} /><div><small>ผู้ใช้ที่ใช้งานอยู่</small><strong>{counts.active}</strong></div></article>
+        <article><ShieldCheck size={18} /><div><small>รอยืนยันอีเมล</small><strong>{counts.pending}</strong></div></article>
       </section>
 
       <section className="role-management__card">
-        <div className="role-management__title"><div><h2>Platform users</h2><p>Role and access changes are saved immediately and recorded in the audit trail.</p></div><span>{users.length} accounts</span></div>
-        <div className="role-table" role="table" aria-label="Platform users">
-          <div className="role-table__head" role="row"><span>User</span><span>Organisation</span><span>Role</span><span>Status</span><span>Access</span></div>
-          {loading ? <div className="role-table__loading">Loading accounts…</div> : users.map((user) => (
+        <div className="role-management__title"><div><h2>ผู้ใช้บนแพลตฟอร์ม</h2><p>การเปลี่ยนบทบาทและสิทธิ์จะถูกบันทึกทันทีในประวัติการตรวจสอบ</p></div><span>{users.length} บัญชี</span></div>
+        <div className="role-table" role="table" aria-label="ผู้ใช้บนแพลตฟอร์ม">
+          <div className="role-table__head" role="row"><span>ผู้ใช้</span><span>องค์กร</span><span>บทบาท</span><span>สถานะ</span><span>สิทธิ์</span></div>
+          {loading ? <div className="role-table__loading">กำลังโหลดบัญชี…</div> : users.map((user) => (
             <div className="role-table__row" role="row" key={user.id}>
               <div className="role-user"><span>{user.name.split(" ").map((part) => part[0]).slice(0, 2).join("")}</span><div><strong>{user.name}</strong><small>{user.email}</small></div></div>
               <p>{user.organization}</p>
-              <label className="sr-only" htmlFor={`role-${user.id}`}>Role for {user.name}</label>
+              <label className="sr-only" htmlFor={`role-${user.id}`}>บทบาทของ {user.name}</label>
               <select id={`role-${user.id}`} value={user.role} onChange={(event) => requestRoleChange(user, event.target.value as AppRole)} disabled={updatingId === user.id || currentUser?.id === user.id}>
-                <option value="vendor">Vendor</option><option value="reviewer">Reviewer</option><option value="admin">Administrator</option>
+                <option value="vendor">ผู้ขาย</option><option value="reviewer">ผู้ตรวจสอบ</option><option value="admin">ผู้ดูแลระบบ</option>
               </select>
-              <span className={`role-status role-status--${user.status.replace("_", "-")}`}>{user.status === "pending_verification" ? "Pending verification" : user.status}</span>
-              <button type="button" className="role-access-button" onClick={() => requestAccessChange(user)} disabled={updatingId === user.id || currentUser?.id === user.id}>{user.status === "suspended" ? "Restore" : "Suspend"}<MoreHorizontal size={14} /></button>
+              <span className={`role-status role-status--${user.status.replace("_", "-")}`}>{user.status === "pending_verification" ? "รอยืนยันอีเมล" : user.status === "active" ? "ใช้งานอยู่" : "ระงับแล้ว"}</span>
+              <button type="button" className="role-access-button" onClick={() => requestAccessChange(user)} disabled={updatingId === user.id || currentUser?.id === user.id}>{user.status === "suspended" ? "คืนสิทธิ์" : "ระงับ"}<MoreHorizontal size={14} /></button>
             </div>
           ))}
         </div>
       </section>
 
       <section className="role-management__card role-catalogue">
-        <div className="role-management__title"><div><h2>Role permissions</h2><p>Each role receives the corresponding platform access after its next sign-in.</p></div><ShieldCheck size={19} /></div>
+        <div className="role-management__title"><div><h2>สิทธิ์ตามบทบาท</h2><p>ผู้ใช้จะได้รับสิทธิ์ตามบทบาทใหม่ในการเข้าสู่ระบบครั้งถัดไป</p></div><ShieldCheck size={19} /></div>
         <div>{(Object.keys(roleDescriptions) as AppRole[]).map((role) => <article key={role}><strong>{role}</strong><p>{roleDescriptions[role]}</p></article>)}</div>
       </section>
 
@@ -111,14 +111,14 @@ export default function AccountManagementPage() {
         <div className="invite-backdrop" role="presentation" onMouseDown={() => setPendingChange(null)}>
           <section className="role-confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="account-change-title" onMouseDown={(event) => event.stopPropagation()}>
             <span className={`role-confirm-dialog__icon ${isRoleChange ? "" : "role-confirm-dialog__icon--warning"}`}><AlertTriangle size={20} /></span>
-            <p className="login-kicker">CONFIRM ACCOUNT CHANGE</p>
-            <h2 id="account-change-title">{isRoleChange ? "Change this user’s role?" : nextStatus === "suspended" ? "Suspend this account?" : "Restore this account?"}</h2>
+            <p className="login-kicker">ยืนยันการเปลี่ยนบัญชี</p>
+            <h2 id="account-change-title">{isRoleChange ? "เปลี่ยนบทบาทของผู้ใช้นี้?" : nextStatus === "suspended" ? "ระงับบัญชีนี้?" : "คืนสิทธิ์ให้บัญชีนี้?"}</h2>
             <p><strong>{pendingChange.user.name}</strong> · {pendingChange.user.email}</p>
-            {isRoleChange ? <p>This will change the role from <strong>{pendingChange.user.role}</strong> to <strong>{nextRole}</strong>. The user must sign in again before the new access takes effect.</p> : nextStatus === "suspended" ? <p>This user will lose access to the platform immediately and will be signed out on their next request.</p> : <p>This user will be allowed to sign in again, provided their email has been verified.</p>}
+            {isRoleChange ? <p>บทบาทจะเปลี่ยนจาก <strong>{pendingChange.user.role}</strong> เป็น <strong>{nextRole}</strong> ผู้ใช้ต้องเข้าสู่ระบบใหม่เพื่อให้สิทธิ์ใหม่มีผล</p> : nextStatus === "suspended" ? <p>ผู้ใช้นี้จะไม่สามารถเข้าถึงแพลตฟอร์มและจะถูกออกจากระบบในการเรียกใช้งานครั้งถัดไป</p> : <p>ผู้ใช้นี้จะสามารถเข้าสู่ระบบได้อีกครั้ง เมื่อยืนยันอีเมลแล้ว</p>}
             <div className="role-confirm-dialog__actions">
-              <button className="button button--secondary" type="button" onClick={() => setPendingChange(null)}>Cancel</button>
+              <button className="button button--secondary" type="button" onClick={() => setPendingChange(null)}>ยกเลิก</button>
               <button className={`button ${nextStatus === "suspended" ? "role-confirm-dialog__danger" : "button--primary"}`} type="button" onClick={() => { saveUser(pendingChange.user.id, pendingChange.changes); setPendingChange(null); }}>
-                {isRoleChange ? "Confirm role change" : nextStatus === "suspended" ? "Suspend account" : "Restore access"}
+                {isRoleChange ? "ยืนยันการเปลี่ยนบทบาท" : nextStatus === "suspended" ? "ระงับบัญชี" : "คืนสิทธิ์การเข้าถึง"}
               </button>
             </div>
           </section>

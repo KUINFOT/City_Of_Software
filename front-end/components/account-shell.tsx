@@ -21,15 +21,15 @@ export function AccountShell({ children, allowedRoles }: AccountShellProps) {
     if (ready && !user) router.replace(`/login?next=${encodeURIComponent(pathname)}`);
   }, [pathname, ready, router, user]);
 
-  if (!ready || !user) return <main className="auth-loading">Checking your session…</main>;
+  if (!ready || !user) return <main className="auth-loading">กำลังตรวจสอบเซสชัน…</main>;
 
   if (allowedRoles && !allowedRoles.includes(user.role)) {
     return (
       <main className="access-denied">
-        <p className="login-kicker">ACCESS RESTRICTED</p>
-        <h1>This page is for administrators.</h1>
-        <p>Your signed-in role is <strong>{user.role}</strong>. Sign in with an administrator account to manage platform users.</p>
-        <Link className="button button--primary" href="/dashboard">Return to dashboard</Link>
+        <p className="login-kicker">ไม่มีสิทธิ์เข้าถึง</p>
+        <h1>หน้านี้สำหรับผู้ดูแลระบบ</h1>
+        <p>บทบาทปัจจุบันของคุณคือ <strong>{user.role}</strong> โปรดเข้าสู่ระบบด้วยบัญชีผู้ดูแลเพื่อจัดการผู้ใช้บนแพลตฟอร์ม</p>
+        <Link className="button button--primary" href="/dashboard">กลับสู่แดชบอร์ด</Link>
       </main>
     );
   }

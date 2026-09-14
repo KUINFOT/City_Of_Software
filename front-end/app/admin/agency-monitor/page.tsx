@@ -26,9 +26,9 @@ const startingAgencies: Agency[] = [
 ];
 
 const healthCopy: Record<AgencyHealth, string> = {
-  healthy: "Healthy",
-  delayed: "Delayed",
-  "needs-attention": "Needs attention",
+  healthy: "ปกติ",
+  delayed: "ล่าช้า",
+  "needs-attention": "ต้องตรวจสอบ",
 };
 
 export default function AgencyMonitorPage() {
@@ -49,12 +49,12 @@ export default function AgencyMonitorPage() {
       setAgencies((current) => current.map((agency) => agency.id === id ? {
         ...agency,
         health: "healthy",
-        lastChecked: "Just now",
-        nextCheck: agency.schedule === "Every hour" ? "In 1 hour" : agency.schedule === "Every 6 hours" ? "In 6 hours" : "Tomorrow, 08:00",
+        lastChecked: "เมื่อสักครู่",
+        nextCheck: agency.schedule === "Every hour" ? "ใน 1 ชั่วโมง" : agency.schedule === "Every 6 hours" ? "ใน 6 ชั่วโมง" : "พรุ่งนี้ 08:00",
       } : agency));
       setCheckingId(null);
-      setNotice("Demo check completed. No website was contacted.");
-      recordEvent({ category: "Monitoring", action: "Completed demo check", target: agencies.find((agency) => agency.id === id)?.name ?? "Agency site", details: "A browser-only monitoring check completed. No external website was contacted." });
+      setNotice("ตรวจสอบตัวอย่างเสร็จสิ้น ไม่มีการเชื่อมต่อเว็บไซต์จริง");
+      recordEvent({ category: "Monitoring", action: "ตรวจสอบตัวอย่างเสร็จสิ้น", target: agencies.find((agency) => agency.id === id)?.name ?? "เว็บไซต์หน่วยงาน", details: "การตรวจสอบในเบราว์เซอร์เสร็จสิ้น โดยไม่เรียกเว็บไซต์ภายนอก" });
     }, 850);
   }
 
@@ -64,14 +64,14 @@ export default function AgencyMonitorPage() {
     setAgencies((current) => current.map((agency) => agency.id === id ? {
       ...agency,
       enabled: !agency.enabled,
-      nextCheck: agency.enabled ? "Paused" : "Scheduled after saving",
+      nextCheck: agency.enabled ? "หยุดชั่วคราว" : "กำหนดเวลาแล้วหลังบันทึก",
     } : agency));
   }
 
   function updateSchedule(id: string, schedule: Agency["schedule"]) {
     const agency = agencies.find((candidate) => candidate.id === id);
     if (agency && agency.schedule !== schedule) recordEvent({ category: "Monitoring", action: "Updated schedule", target: `${agency.name}: ${agency.schedule} → ${schedule}`, details: "Agency monitor cadence was changed in the frontend prototype." });
-    setAgencies((current) => current.map((agency) => agency.id === id ? { ...agency, schedule, nextCheck: "Schedule updated" } : agency));
+    setAgencies((current) => current.map((agency) => agency.id === id ? { ...agency, schedule, nextCheck: "อัปเดตกำหนดการแล้ว" } : agency));
   }
 
   function addAgency(event: FormEvent<HTMLFormElement>) {
@@ -81,44 +81,44 @@ export default function AgencyMonitorPage() {
     const url = String(form.get("url") ?? "").trim();
     const schedule = String(form.get("schedule") ?? "Daily") as Agency["schedule"];
     if (!name || !url) return;
-    setAgencies((current) => [...current, { id: `agency-${Date.now()}`, name, url, schedule, lastChecked: "Not checked yet", nextCheck: "Scheduled after saving", health: "healthy", enabled: true }]);
+    setAgencies((current) => [...current, { id: `agency-${Date.now()}`, name, url, schedule, lastChecked: "ยังไม่ตรวจสอบ", nextCheck: "กำหนดเวลาแล้วหลังบันทึก", health: "healthy", enabled: true }]);
     recordEvent({ category: "Monitoring", action: "Added agency site", target: name, details: `Added ${url} with a ${schedule} schedule in the frontend prototype.` });
     setAddOpen(false);
-    setNotice(`Added ${name} to the local monitoring schedule.`);
+    setNotice(`เพิ่ม ${name} ในกำหนดการติดตามบนเบราว์เซอร์แล้ว`);
   }
 
   return (
     <AccountShell allowedRoles={["admin"]}>
       <header className="account-header agency-monitor__header">
-        <div><p className="login-kicker">SCHEDULED COLLECTION</p><h1>Agency Site Monitoring</h1><p>Set the checking cadence for each agency site. This prototype stores changes only in the current browser tab.</p></div>
-        <button className="button button--primary" type="button" onClick={() => setAddOpen(true)}><Plus size={16} /> Add agency site</button>
+        <div><p className="login-kicker">การรวบรวมข้อมูลตามกำหนด</p><h1>ติดตามเว็บไซต์หน่วยงาน</h1><p>กำหนดรอบการตรวจสอบเว็บไซต์ของแต่ละหน่วยงาน การเปลี่ยนแปลงในตัวอย่างนี้เก็บไว้เฉพาะแท็บปัจจุบัน</p></div>
+        <button className="button button--primary" type="button" onClick={() => setAddOpen(true)}><Plus size={16} /> เพิ่มเว็บไซต์หน่วยงาน</button>
       </header>
 
-      {notice && <div className="role-management__notice" role="status">{notice}<button type="button" onClick={() => setNotice("")}>Dismiss</button></div>}
+      {notice && <div className="role-management__notice" role="status">{notice}<button type="button" onClick={() => setNotice("")}>ปิด</button></div>}
 
-      <section className="admin-monitor-summary" aria-label="Monitoring summary">
-        <article><Globe2 size={19} /><div><strong>{summary.enabled}</strong><span>Sites currently scheduled</span></div></article>
-        <article><Play size={19} /><div><strong>{summary.healthy}</strong><span>Adapters healthy</span></div></article>
-        <article><Clock3 size={19} /><div><strong>{summary.attention}</strong><span>Need an administrator check</span></div></article>
+      <section className="admin-monitor-summary" aria-label="สรุปการติดตาม">
+        <article><Globe2 size={19} /><div><strong>{summary.enabled}</strong><span>เว็บไซต์ที่ตั้งเวลาตรวจสอบ</span></div></article>
+        <article><Play size={19} /><div><strong>{summary.healthy}</strong><span>ตัวเชื่อมต่อปกติ</span></div></article>
+        <article><Clock3 size={19} /><div><strong>{summary.attention}</strong><span>ต้องให้ผู้ดูแลตรวจสอบ</span></div></article>
       </section>
 
       <section className="agency-table-wrap role-management__card">
-        <div className="admin-panel__title"><div><h2>Scheduled agency sites</h2><p>Each schedule will later trigger the site adapter and submit new postings for processing.</p></div><span><Clock3 size={14} /> Local preview</span></div>
-        <div className="agency-table" role="table" aria-label="Scheduled agency sites">
-          <div className="agency-table__head" role="row"><span>Agency site</span><span>Schedule</span><span>Last check</span><span>Next check</span><span>Health</span><span /></div>
+        <div className="admin-panel__title"><div><h2>เว็บไซต์หน่วยงานตามกำหนด</h2><p>กำหนดการแต่ละรายการจะสั่งตัวเชื่อมต่อเว็บไซต์และส่งประกาศใหม่เพื่อประมวลผลในอนาคต</p></div><span><Clock3 size={14} /> ตัวอย่างในเครื่อง</span></div>
+        <div className="agency-table" role="table" aria-label="เว็บไซต์หน่วยงานตามกำหนด">
+          <div className="agency-table__head" role="row"><span>เว็บไซต์หน่วยงาน</span><span>กำหนดการ</span><span>ตรวจสอบล่าสุด</span><span>ตรวจสอบครั้งถัดไป</span><span>สถานะ</span><span /></div>
           {agencies.map((agency) => (
             <div className="agency-table__row" role="row" key={agency.id}>
               <div><strong>{agency.name}</strong><span>{agency.url}</span></div>
-              <select className="agency-schedule" value={agency.schedule} onChange={(event) => updateSchedule(agency.id, event.target.value as Agency["schedule"])} aria-label={`Schedule for ${agency.name}`} disabled={!agency.enabled}><option>Every hour</option><option>Every 6 hours</option><option>Daily</option></select>
+              <select className="agency-schedule" value={agency.schedule} onChange={(event) => updateSchedule(agency.id, event.target.value as Agency["schedule"])} aria-label={`กำหนดการของ ${agency.name}`} disabled={!agency.enabled}><option value="Every hour">ทุก 1 ชั่วโมง</option><option value="Every 6 hours">ทุก 6 ชั่วโมง</option><option value="Daily">ทุกวัน</option></select>
               <span>{agency.lastChecked}</span><span>{agency.nextCheck}</span>
-              <span className={`agency-health agency-health--${agency.health}`}>{agency.enabled ? healthCopy[agency.health] : "Paused"}</span>
-              <div className="agency-actions"><button type="button" title="Run demo check" aria-label={`Run demo check for ${agency.name}`} onClick={() => runCheck(agency.id)} disabled={!agency.enabled || checkingId === agency.id}>{checkingId === agency.id ? <RefreshCw className="spin" size={14} /> : <RefreshCw size={14} />}</button><button type="button" title={agency.enabled ? "Pause schedule" : "Resume schedule"} aria-label={agency.enabled ? `Pause ${agency.name}` : `Resume ${agency.name}`} onClick={() => toggleAgency(agency.id)}>{agency.enabled ? <Pause size={14} /> : <Play size={14} />}</button></div>
+              <span className={`agency-health agency-health--${agency.health}`}>{agency.enabled ? healthCopy[agency.health] : "หยุดชั่วคราว"}</span>
+              <div className="agency-actions"><button type="button" title="ตรวจสอบตัวอย่าง" aria-label={`ตรวจสอบตัวอย่างสำหรับ ${agency.name}`} onClick={() => runCheck(agency.id)} disabled={!agency.enabled || checkingId === agency.id}>{checkingId === agency.id ? <RefreshCw className="spin" size={14} /> : <RefreshCw size={14} />}</button><button type="button" title={agency.enabled ? "หยุดกำหนดการ" : "เริ่มกำหนดการ"} aria-label={agency.enabled ? `หยุด ${agency.name}` : `เริ่ม ${agency.name}`} onClick={() => toggleAgency(agency.id)}>{agency.enabled ? <Pause size={14} /> : <Play size={14} />}</button></div>
             </div>
           ))}
         </div>
       </section>
 
-      {addOpen && <div className="invite-backdrop" role="presentation" onMouseDown={() => setAddOpen(false)}><form className="invite-dialog" onSubmit={addAgency} onMouseDown={(event) => event.stopPropagation()}><p className="login-kicker">NEW SOURCE</p><h2>Add agency site</h2><p>This only adds an entry to the visible frontend list.</p><label><span>Agency name</span><input name="name" autoFocus placeholder="e.g. Bang Rak District Office" /></label><label><span>Website address</span><input name="url" placeholder="agency.example.go.th" /></label><label><span>Checking schedule</span><select name="schedule"><option>Every hour</option><option>Every 6 hours</option><option>Daily</option></select></label><div><button className="button button--secondary" type="button" onClick={() => setAddOpen(false)}>Cancel</button><button className="button button--primary" type="submit">Add schedule</button></div></form></div>}
+      {addOpen && <div className="invite-backdrop" role="presentation" onMouseDown={() => setAddOpen(false)}><form className="invite-dialog" onSubmit={addAgency} onMouseDown={(event) => event.stopPropagation()}><p className="login-kicker">แหล่งข้อมูลใหม่</p><h2>เพิ่มเว็บไซต์หน่วยงาน</h2><p>รายการนี้จะแสดงเฉพาะในหน้าเว็บตัวอย่าง</p><label><span>ชื่อหน่วยงาน</span><input name="name" autoFocus placeholder="เช่น สำนักงานเขตบางรัก" /></label><label><span>ที่อยู่เว็บไซต์</span><input name="url" placeholder="agency.example.go.th" /></label><label><span>กำหนดการตรวจสอบ</span><select name="schedule"><option value="Every hour">ทุก 1 ชั่วโมง</option><option value="Every 6 hours">ทุก 6 ชั่วโมง</option><option value="Daily">ทุกวัน</option></select></label><div><button className="button button--secondary" type="button" onClick={() => setAddOpen(false)}>ยกเลิก</button><button className="button button--primary" type="submit">เพิ่มกำหนดการ</button></div></form></div>}
     </AccountShell>
   );
 }
