@@ -1,5 +1,6 @@
-import { Bell, Bookmark, ChevronDown, Clock3, FileText, MapPin, School, Sparkles, Video } from "lucide-react";
+import { Bell, ChevronDown, Clock3, FileText, MapPin, School, Video } from "lucide-react";
 import { AccountShell } from "@/components/account-shell";
+import { MatchGrid } from "@/components/match-grid";
 
 const matches = [
   { icon: Video, category: "AI Video Analytics", match: "96% Match", title: "District CCTV Surveillance Machine Vision Analysis Engine", agency: "Sathon & Pathum Wan District Office", budget: "฿ 8,500,000", deadline: "15 April 2026" },
@@ -23,16 +24,7 @@ export default function DashboardPage() {
 
       <section className="dashboard-section" id="recommendations">
         <div className="section-title"><div><h2>AI-Matched Recommended TORs</h2><span>NEW RELEASES</span></div><a href="/settings#notifications">Configure Preferences</a></div>
-        <div className="match-grid">
-          {matches.map(({ icon: Icon, ...match }) => (
-            <article className="match-card" key={match.title}>
-              <div className="match-card__top"><span><Icon size={14} />{match.category}</span><strong><Sparkles size={14} />{match.match}</strong></div>
-              <h3>{match.title}</h3><p>{match.agency}</p>
-              <div className="card-meta"><div><small>ESTIMATED BUDGET</small><strong>{match.budget}</strong></div><div><small>SUBMISSION DEADLINE</small><strong>{match.deadline}</strong></div></div>
-              <div className="card-actions"><button>View AI Summary</button><button aria-label="Bookmark"><Bookmark size={16} /></button></div>
-            </article>
-          ))}
-        </div>
+        <MatchGrid matches={matches} />
       </section>
 
       <section className="bottom-grid">
