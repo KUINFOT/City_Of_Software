@@ -16,15 +16,25 @@ export async function uploadDocument(
     }
 
     const { originalname, mimetype, size, buffer } = req.file;
+    const projectTitle = req.body?.projectTitle ?? 'Untitled Project';
+    const datePublished = req.body?.datePublished ? new Date(req.body.datePublished) : null;
+    const deadline = req.body?.deadline ? new Date(req.body.deadline) : null;
 
     // Run (stubbed) OCR / text extraction.
     const extraction = await extractText(buffer, mimetype);
 
     const doc = await DocumentModel.create({
       originalName: originalname,
+      projectTitle,
       mimeType: mimetype,
       size,
       status: 'extracted',
+      datePublished,
+      agency: req.body?.agency ?? '',
+      budget: req.body?.budget ?? '',
+      deadline,
+      technology: req.body?.technology ?? '',
+      projectType: req.body?.projectType ?? '',
       extractedText: extraction.text,
       metadata: {
         pageCount: extraction.pageCount,

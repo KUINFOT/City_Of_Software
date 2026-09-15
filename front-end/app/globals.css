@@ -224,6 +224,9 @@ button { cursor: pointer; }
 }
 .filter-range input[type="number"] { width: 100%; height: 27px; margin: 10px 0 0; padding: 0 7px; color: #334058; border: 1px solid #dfe5ed; border-radius: 5px; outline: 0; font-size: 8px; }
 .filter-range input[type="number"]:focus { border-color: var(--blue); box-shadow: 0 0 0 2px rgba(28,69,154,.08); }
+.filter-range > div { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.filter-range label { display: grid; gap: 5px; color: #69768a; font-size: 7px; }
+.filter-range input[type="number"] { margin-top: 0; }
 .filter-dates > div { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .filter-dates label { display: grid; gap: 5px; color: #69768a; font-size: 7px; }
 .filter-dates input { width: 100%; height: 27px; padding: 0 6px; color: #8590a1; border: 1px solid #dfe5ed; border-radius: 5px; outline: 0; font-size: 7px; }
@@ -231,7 +234,8 @@ button { cursor: pointer; }
 .results-toolbar p { margin: 0; color: #56657d; font-size: 10px; }
 .results-toolbar p strong { color: #273955; }
 .sort-button { display: inline-flex; align-items: center; gap: 5px; color: #6b778a; background: transparent; border: 0; font-size: 9px; }
-.sort-button strong { padding: 6px 8px; color: #263754; background: #fff; border: 1px solid var(--line); border-radius: 4px; font-size: 8px; }
+.sort-button span { color: #6b778a; }
+.sort-button select { padding: 6px 8px; color: #263754; background: #fff; border: 1px solid var(--line); border-radius: 4px; font-size: 8px; font-weight: 600; outline: 0; }
 .results-content .match-grid { gap: 15px; }
 .results-content .match-card { min-height: 204px; padding: 14px; border-radius: 9px; box-shadow: 0 5px 16px rgba(13,31,62,.05); }
 .results-content .match-card h3 { min-height: 36px; margin-top: 11px; font-size: 10px; }

@@ -29,6 +29,8 @@ const filters = [
 	{ title: "Tender Status", options: [["Draft Feedback", "8", false], ["Open for Bids", "24", true], ["Under Review", "19", false]] },
 ];
 
+const sortOptions = ["Highest Match %", "Newest First", "Deadline"];
+
 function FilterGroup({ title, options }: { title: string; options: (string | boolean)[][] }) {
 	return (
 		<fieldset className="filter-group">
@@ -67,31 +69,7 @@ export default function SearchPage() {
 					{filters.map((filter) => <FilterGroup key={filter.title} {...filter} />)}
 					<fieldset className="filter-group filter-range">
 						<legend>Budget Range</legend>
-                        <div className="range-labels">
-                            <strong>
-                                Min
-                                <input
-                                    type="number"
-                                    min="5"
-                                    max="50"
-                                    step="1"
-                                    defaultValue="35"
-                                    inputMode="numeric"
-                                />
-                            </strong>
-
-                            <strong>
-                                Max
-                                <input
-                                    type="number"
-                                    min="5"
-                                    max="50"
-                                    step="1"
-                                    defaultValue="35"
-                                    inputMode="numeric"
-                                />
-                            </strong>
-                        </div>
+						<div><label>Min<input type="number" min="5" max="50" step="1" defaultValue="35" inputMode="numeric" /></label><label>Max<input type="number" min="5" max="50" step="1" defaultValue="35" inputMode="numeric" /></label></div>
 					</fieldset>
 					<fieldset className="filter-group filter-dates">
 						<legend>Date Published</legend>
@@ -101,12 +79,21 @@ export default function SearchPage() {
 						<legend>Deadline</legend>
 						<div><label>From<input type="text" placeholder="01/01/2025" /></label><label>To<input type="text" placeholder="14/09/2026" /></label></div>
 					</fieldset>
+					<button className="button button--orange" type="button" style={{ marginTop: "1rem", width: "100%", fontSize: "0.875rem" }}>Apply</button>
 				</aside>
 
 				<section className="results-content" aria-labelledby="results-heading">
 					<div className="results-toolbar">
 						<p id="results-heading">Showing <strong>124</strong> software projects matching “Smart City Software”</p>
-						<button className="sort-button" type="button"><SlidersHorizontal size={13} /> Sort by: <strong>Highest Match %</strong><ChevronDown size={13} /></button>
+						<label className="sort-button" htmlFor="sort-select">
+							<SlidersHorizontal size={13} />
+							<span>Sort by:</span>
+							<select id="sort-select" aria-label="Sort results" defaultValue="Highest Match %">
+								{sortOptions.map((option) => (
+									<option key={option} value={option}>{option}</option>
+								))}
+							</select>
+						</label>
 					</div>
 					<MatchGrid matches={matches} />
 					<nav className="pagination" aria-label="Search results pages">
