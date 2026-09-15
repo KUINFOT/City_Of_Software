@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { TorModel } from '../models/Tor';
 import { DocumentModel } from '../models/Document';
+import { AgencyModel } from '../models/Agency';
 import { VendorProfileModel } from '../models/VendorProfile';
 import { EXTRACTED_FIELD_KEYS, FIELD_TO_TOR_PATH } from '../extraction/core/fieldSchema';
 import { extractionConfig } from '../extraction/core/config';
@@ -55,11 +56,29 @@ export async function getTor(req: Request, res: Response, next: NextFunction): P
       fields[key] = { value: value ?? null, confidence, caution: confidence < extractionConfig.reviewThreshold };
     }
 
+    // "Procuring Department" contact card — real, but sparse: the crawler
+    // never populates Agency.contact today, so most agencies will have none
+    // of these three fields. Each is surfaced only when actually present
+    // rather than defaulted, so the frontend can omit a missing line instead
+    // of showing a placeholder.
+    const agency = await AgencyModel.findById(record.agencyId).select('contact').lean();
+
     res.json({
       _id: record._id,
       title: record.title,
       agencyName: record.agencyName,
+      agencyContact: agency?.contact
+        ? {
+            address: agency.contact.address ?? null,
+            email: agency.contact.email ?? null,
+            phone: agency.contact.phone ?? null,
+          }
+        : null,
       status: record.status,
+      // Not part of the extracted `fields` map below (EXTRACTED_FIELD_KEYS
+      // has no entry for it) — exposed directly since the detail-page hero
+      // badge needs it.
+      projectType: record.projectType ?? null,
       lifecycle: record.lifecycle,
       timeline: record.timeline,
       // US-016/FR-REP-04: "source address ... and import method" — the rest

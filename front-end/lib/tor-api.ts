@@ -41,11 +41,15 @@ export type TorOutlier = {
   signal: string;
 } | null;
 
+export type TorAgencyContact = { address: string | null; email: string | null; phone: string | null } | null;
+
 export type TorDetail = {
   _id: string;
   title: string;
   agencyName: string;
+  agencyContact: TorAgencyContact;
   status: TorStatusValue;
+  projectType: string | null;
   lifecycle: { stage: string; stageLabel?: string | null; isAwarded: boolean | null };
   timeline: Record<string, string | null | undefined>;
   source: TorSource;

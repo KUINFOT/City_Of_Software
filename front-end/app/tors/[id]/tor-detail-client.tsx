@@ -2,22 +2,10 @@
 
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
-import { AlertTriangle, Sparkles } from "lucide-react";
+import Link from "next/link";
+import { AlertTriangle, Building2, Copy, Download, Sparkles, Star, UserPlus } from "lucide-react";
 import { useAuth } from "@/components/auth-provider";
-import { KeyDatesPanel } from "@/components/tor-detail/key-dates-panel";
-import { ProvenancePanel } from "@/components/tor-detail/provenance-panel";
-import { QualificationMatchPanel } from "@/components/tor-detail/qualification-match-panel";
-import { MatchReasonsPanel } from "@/components/tor-detail/match-reasons-panel";
-import {
-  getMatchReasons,
-  getQualificationMatch,
-  getTor,
-  getTorDocuments,
-  MatchReasonsResult,
-  QualificationMatchResult,
-  TorDetail,
-  TorDocument,
-} from "@/lib/tor-api";
+import { getMatchReasons, getTor, getTorDocuments, MatchReasonsResult, TorDetail, TorDocument } from "@/lib/tor-api";
 
 const STAGE_LABEL: Record<string, string> = {
   plan: "อยู่ระหว่างวางแผน",
@@ -30,11 +18,17 @@ const STAGE_LABEL: Record<string, string> = {
   other: "อยู่ระหว่างดำเนินการ",
 };
 
-const STAGE_CLASS: Record<string, string> = {
-  bidding_open: "tor-status--open",
-  draft_tor: "tor-status--draft",
-  awarded: "tor-status--awarded",
-  cancelled: "tor-status--cancelled",
+const STAGE_BADGE_CLASS: Record<string, string> = {
+  bidding_open: "tor-pill--positive",
+  awarded: "tor-pill--neutral",
+  cancelled: "tor-pill--negative",
+};
+
+const PROJECT_TYPE_LABEL: Record<string, string> = {
+  web_application: "เว็บแอปพลิเคชัน",
+  mobile_application: "แอปพลิเคชันมือถือ",
+  it_system: "ระบบไอที",
+  other: "ซอฟต์แวร์อื่นๆ",
 };
 
 const PROCUREMENT_METHOD_LABEL: Record<string, string> = {
@@ -48,7 +42,11 @@ const PROCUREMENT_METHOD_LABEL: Record<string, string> = {
 const COMPLEXITY_LABEL: Record<string, string> = { low: "ต่ำ", medium: "ปานกลาง", high: "สูง" };
 
 function formatThb(value: number) {
-  return `${new Intl.NumberFormat("th-TH").format(value)} บาท`;
+  return `฿${new Intl.NumberFormat("th-TH").format(value)}`;
+}
+
+function formatDate(value: string | null | undefined) {
+  return value ? new Date(value).toLocaleDateString("th-TH", { year: "numeric", month: "long", day: "numeric" }) : null;
 }
 
 function asStringArray(value: unknown): string[] {
@@ -68,15 +66,11 @@ export function TorDetailClient() {
   const [torLoading, setTorLoading] = useState(true);
 
   const [documents, setDocuments] = useState<TorDocument[] | null>(null);
-  const [documentsLoading, setDocumentsLoading] = useState(true);
-
-  const [matchResult, setMatchResult] = useState<QualificationMatchResult | null>(null);
-  const [matchLoading, setMatchLoading] = useState(false);
-  const [matchError, setMatchError] = useState<string | null>(null);
 
   const [reasonsResult, setReasonsResult] = useState<MatchReasonsResult | null>(null);
-  const [reasonsLoading, setReasonsLoading] = useState(false);
-  const [reasonsError, setReasonsError] = useState<string | null>(null);
+
+  const [linkCopied, setLinkCopied] = useState(false);
+  const [copyError, setCopyError] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -91,11 +85,9 @@ export function TorDetailClient() {
 
   useEffect(() => {
     let cancelled = false;
-    setDocumentsLoading(true);
     getTorDocuments(torId)
       .then((result) => { if (!cancelled) setDocuments(result); })
-      .catch(() => { if (!cancelled) setDocuments([]); })
-      .finally(() => { if (!cancelled) setDocumentsLoading(false); });
+      .catch(() => { if (!cancelled) setDocuments([]); });
     return () => { cancelled = true; };
   }, [torId]);
 
@@ -104,26 +96,48 @@ export function TorDetailClient() {
   useEffect(() => {
     if (viewerRole !== "vendor" || !token) return;
     let cancelled = false;
-    setMatchLoading(true);
-    setMatchError(null);
-    getQualificationMatch(torId, token)
-      .then((result) => { if (!cancelled) setMatchResult(result); })
-      .catch((error: unknown) => { if (!cancelled) setMatchError(error instanceof Error ? error.message : "ไม่สามารถตรวจสอบคุณสมบัติได้ในขณะนี้"); })
-      .finally(() => { if (!cancelled) setMatchLoading(false); });
+    getMatchReasons(torId, token)
+      .then((result) => { if (!cancelled) setReasonsResult(result); })
+      .catch(() => { if (!cancelled) setReasonsResult(null); });
     return () => { cancelled = true; };
   }, [viewerRole, token, torId]);
 
-  useEffect(() => {
-    if (viewerRole !== "vendor" || !token) return;
-    let cancelled = false;
-    setReasonsLoading(true);
-    setReasonsError(null);
-    getMatchReasons(torId, token)
-      .then((result) => { if (!cancelled) setReasonsResult(result); })
-      .catch((error: unknown) => { if (!cancelled) setReasonsError(error instanceof Error ? error.message : "ไม่สามารถตรวจสอบเหตุผลที่ตรงกันได้ในขณะนี้"); })
-      .finally(() => { if (!cancelled) setReasonsLoading(false); });
-    return () => { cancelled = true; };
-  }, [viewerRole, token, torId]);
+  function fallbackCopy(text: string): boolean {
+    try {
+      const textarea = document.createElement("textarea");
+      textarea.value = text;
+      textarea.style.position = "fixed";
+      textarea.style.opacity = "0";
+      document.body.appendChild(textarea);
+      textarea.select();
+      const ok = document.execCommand("copy");
+      document.body.removeChild(textarea);
+      return ok;
+    } catch {
+      return false;
+    }
+  }
+
+  function copyLink() {
+    const url = window.location.href;
+    setCopyError(false);
+    const showCopied = () => { setLinkCopied(true); setTimeout(() => setLinkCopied(false), 1800); };
+    const showError = () => { setCopyError(true); setTimeout(() => setCopyError(false), 2400); };
+
+    if (navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(url).then(showCopied, () => {
+        // Permission denied or unsupported (older browsers, some sandboxed
+        // contexts) — fall back to the classic execCommand technique before
+        // giving up, so a real user still gets a working "copy link."
+        if (fallbackCopy(url)) showCopied();
+        else showError();
+      });
+    } else if (fallbackCopy(url)) {
+      showCopied();
+    } else {
+      showError();
+    }
+  }
 
   if (torLoading || !ready) {
     return <main className="tor-detail-page"><p className="tor-detail-loading">กำลังโหลดข้อมูล TOR...</p></main>;
@@ -147,82 +161,187 @@ export function TorDetailClient() {
   const deliverables = asStringArray(tor.fields.deliverables?.value);
   const keyRisks = asStringArray(tor.fields.keyRisks?.value);
   const evaluationCriteria = asStringArray(tor.fields.evaluationCriteria?.value);
+  const requiredCertifications = tor.qualifications?.requiredCertifications ?? [];
+  const highlights = [...deliverables, ...evaluationCriteria, ...keyRisks];
+
+  const announcementDate = tor.timeline?.announcementDate ? String(tor.timeline.announcementDate) : null;
+  const submissionDeadline = tor.timeline?.submissionDeadline ? String(tor.timeline.submissionDeadline) : null;
+  const deadlineKeyDate = tor.keyDates.find((d) => d.key === "submissionDeadline");
+
+  let progressPct: number | null = null;
+  if (announcementDate && submissionDeadline) {
+    const start = new Date(announcementDate).getTime();
+    const end = new Date(submissionDeadline).getTime();
+    const now = Date.now();
+    if (end > start) progressPct = Math.max(0, Math.min(100, ((now - start) / (end - start)) * 100));
+  }
+
+  const primaryDocument = documents?.find((d) => d.fileUrl) ?? null;
+  const summaryText = tor.summaryAi?.text ?? (tor.fields.description?.value ? String(tor.fields.description.value) : null);
 
   return (
     <main className="tor-detail-page">
-      <section className="tor-detail-header panel">
-        <div className="tor-detail-header__top">
-          <span className="tor-category">{tor.agencyName}</span>
-          <span className={`tor-status ${STAGE_CLASS[stage] ?? "tor-status--in-progress"}`}>{STAGE_LABEL[stage] ?? stage}</span>
+      <div className="tor-detail-layout">
+        <div className="tor-detail-main">
+          <section className="tor-hero-card">
+            <div className="tor-hero-card__badges">
+              <div className="tor-pill-group">
+                {tor.projectType && <span className="tor-pill tor-pill--info">{PROJECT_TYPE_LABEL[tor.projectType] ?? tor.projectType}</span>}
+                <span className={`tor-pill ${STAGE_BADGE_CLASS[stage] ?? "tor-pill--info"}`}>{STAGE_LABEL[stage] ?? stage}</span>
+              </div>
+              {viewerRole === "vendor" && reasonsResult && (
+                <span className="tor-match-score"><Star size={14} />{Math.round(reasonsResult.score * 100)}% ตรงกับโปรไฟล์ของคุณ</span>
+              )}
+            </div>
+
+            <h1 className="tor-hero-card__title">{tor.title}</h1>
+            {tor.fields.referenceNumber?.value ? <p className="tor-detail-reference">เลขที่อ้างอิง: {String(tor.fields.referenceNumber.value)}</p> : null}
+
+            <div className="tor-info-strip">
+              <div>
+                <span>งบประมาณโดยประมาณ</span>
+                <strong className="tor-info-strip__budget">{typeof budget === "number" ? formatThb(budget) : "ไม่ระบุ"}</strong>
+              </div>
+              <div>
+                <span>กำหนดส่งข้อเสนอ</span>
+                <strong>{formatDate(submissionDeadline) ?? "ไม่ระบุ"}</strong>
+              </div>
+              <div>
+                <span>หน่วยงานผู้ประกาศ</span>
+                <strong className="tor-info-strip__agency">{tor.agencyName}</strong>
+              </div>
+            </div>
+
+            <div className="tor-hero-card__section">
+              <h2>สรุปโครงการ</h2>
+              {summaryText ? (
+                <>
+                  <p>{summaryText}</p>
+                  {tor.summaryAi && <span className="ai-summary-disclaimer">สรุปโดยระบบ AI — ไม่ใช่ข้อมูลที่เป็นทางการ</span>}
+                </>
+              ) : (
+                <p className="tor-detail-empty-note">ยังไม่มีข้อมูลสรุปโครงการ</p>
+              )}
+            </div>
+
+            <div className="tor-hero-card__section">
+              <h2>รายละเอียดแพลตฟอร์ม</h2>
+              <div className="tor-requirement-table">
+                {formatDate(announcementDate) && (
+                  <div><span>วันที่ประกาศ</span><span>{formatDate(announcementDate)}</span></div>
+                )}
+                {tor.fields.procurementMethod?.value ? (
+                  <div><span>วิธีการจัดซื้อจัดจ้าง</span><span>{PROCUREMENT_METHOD_LABEL[String(tor.fields.procurementMethod.value)] ?? String(tor.fields.procurementMethod.value)}</span></div>
+                ) : null}
+                {requiredTechnologies.length > 0 && (
+                  <div><span>เทคโนโลยีที่ต้องใช้</span><span>{requiredTechnologies.join(", ")}</span></div>
+                )}
+                {requiredCertifications.length > 0 && (
+                  <div><span>ใบรับรองที่ต้องมี</span><span>{requiredCertifications.join(", ")}</span></div>
+                )}
+                {tor.fields.estimatedComplexity?.value ? (
+                  <div><span>ความซับซ้อนของโครงการ</span><span>{COMPLEXITY_LABEL[String(tor.fields.estimatedComplexity.value)] ?? String(tor.fields.estimatedComplexity.value)}</span></div>
+                ) : null}
+              </div>
+            </div>
+          </section>
+
+          {tor.outlier?.isOutlier && (
+            <section className="panel outlier-panel">
+              <div className="panel-title"><h2><AlertTriangle size={16} />งบประมาณผิดปกติจากค่าเฉลี่ย</h2></div>
+              <p>{tor.outlier.signal}</p>
+            </section>
+          )}
+
+          {highlights.length > 0 && (
+            <section className="tor-ai-callout">
+              <div className="tor-ai-callout__title"><Sparkles size={20} /><h2>สรุปข้อกำหนดสำคัญโดย AI</h2></div>
+              <p>โมเดลภาษาของเราสกัดประเด็นสำคัญเหล่านี้จากเอกสารต้นฉบับ:</p>
+              <ul>
+                {highlights.map((item, index) => <li key={`${item}-${index}`}>{item}</li>)}
+              </ul>
+            </section>
+          )}
         </div>
-        <h1>{tor.title}</h1>
-        {tor.fields.referenceNumber?.value ? <p className="tor-detail-reference">เลขที่อ้างอิง: {String(tor.fields.referenceNumber.value)}</p> : null}
-      </section>
 
-      {tor.summaryAi && (
-        <section className="panel ai-summary-panel">
-          <div className="panel-title">
-            <h2><Sparkles size={16} />สรุปโดย AI</h2>
-            <span className="ai-summary-disclaimer">สรุปโดยระบบ AI — ไม่ใช่ข้อมูลที่เป็นทางการ</span>
-          </div>
-          <p>{tor.summaryAi.text}</p>
-        </section>
-      )}
+        <aside className="tor-detail-sidebar">
+          <section className="tor-sidebar-card">
+            <h2>การดำเนินการ</h2>
+            <div className="tor-sidebar-actions">
+              {primaryDocument?.fileUrl ? (
+                <a
+                  className="tor-action-button tor-action-button--primary"
+                  href={`${process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000/api"}${primaryDocument.fileUrl}`}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  <Download size={16} />ดาวน์โหลดเอกสาร TOR ต้นฉบับ
+                </a>
+              ) : (
+                <button className="tor-action-button tor-action-button--primary" type="button" disabled>
+                  <Download size={16} />ไม่มีเอกสารต้นฉบับให้ดาวน์โหลด
+                </button>
+              )}
+              <button className="tor-action-button" type="button" disabled title="ฟีเจอร์นี้จะเปิดให้ใช้งานเร็วๆ นี้">
+                บันทึกโครงการ<span className="tor-coming-soon">เร็วๆ นี้</span>
+              </button>
+              <button className="tor-action-button" type="button" onClick={copyLink}>
+                <Copy size={15} />{linkCopied ? "คัดลอกลิงก์แล้ว" : copyError ? "คัดลอกลิงก์ไม่สำเร็จ" : "แชร์โครงการ"}
+              </button>
+            </div>
+            {deadlineKeyDate?.date && (
+              <>
+                <hr className="tor-sidebar-divider" />
+                <div className="tor-days-remaining">
+                  <div className="tor-days-remaining__row">
+                    <span>วันที่เหลือ</span>
+                    <strong>{deadlineKeyDate.isPast ? `ผ่านไปแล้ว ${Math.abs(deadlineKeyDate.daysRemaining ?? 0)} วัน` : `เหลืออีก ${deadlineKeyDate.daysRemaining} วัน`}</strong>
+                  </div>
+                  {progressPct != null && (
+                    <div className="tor-progress-track"><div className="tor-progress-fill" style={{ width: `${progressPct}%` }} /></div>
+                  )}
+                </div>
+              </>
+            )}
+          </section>
 
-      {tor.outlier?.isOutlier && (
-        <section className="panel outlier-panel">
-          <div className="panel-title"><h2><AlertTriangle size={16} />งบประมาณผิดปกติจากค่าเฉลี่ย</h2></div>
-          <p>{tor.outlier.signal}</p>
-        </section>
-      )}
+          <section className="tor-sidebar-card">
+            <h2>หน่วยงานผู้รับผิดชอบ</h2>
+            <div className="tor-department">
+              <span className="tor-department__icon"><Building2 size={18} /></span>
+              <div>
+                <strong>{tor.agencyName}</strong>
+                {tor.agencyContact?.address && <span>{tor.agencyContact.address}</span>}
+              </div>
+            </div>
+            {(tor.agencyContact?.email || tor.agencyContact?.phone) ? (
+              <>
+                <hr className="tor-sidebar-divider" />
+                <div className="tor-department-contact">
+                  {tor.agencyContact.email && <p>อีเมล: {tor.agencyContact.email}</p>}
+                  {tor.agencyContact.phone && <p>โทรศัพท์: {tor.agencyContact.phone}</p>}
+                </div>
+              </>
+            ) : (
+              <p className="tor-detail-empty-note">
+                ยังไม่มีข้อมูลติดต่อโดยตรง{tor.source?.sourceUrl ? <> — ดูรายละเอียดที่ <a href={tor.source.sourceUrl} target="_blank" rel="noreferrer">เว็บไซต์ต้นทาง</a></> : null}
+              </p>
+            )}
+          </section>
 
-      <div className="tor-detail-grid">
-        <KeyDatesPanel keyDates={tor.keyDates} />
-        <QualificationMatchPanel
-          viewerRole={viewerRole ?? "guest"}
-          loading={matchLoading}
-          error={matchError}
-          result={matchResult}
-        />
-        <MatchReasonsPanel
-          viewerRole={viewerRole ?? "guest"}
-          loading={reasonsLoading}
-          error={reasonsError}
-          result={reasonsResult}
-        />
+          {viewerRole === "guest" && (
+            <section className="tor-sidebar-card tor-sidebar-card--prompt">
+              <UserPlus size={22} />
+              <h2>สมัครสมาชิกเพื่อดูว่าโครงการนี้ตรงกับคุณอย่างไร</h2>
+              <p>เข้าสู่ระบบในฐานะผู้ขายและกรอกโปรไฟล์ เพื่อดูคะแนนความตรงกันและเหตุผลที่ตรงกับความสนใจของคุณ</p>
+              <div className="tor-sidebar-card--prompt__actions">
+                <Link href="/register" className="button button--primary button--small">สมัครใช้งาน</Link>
+                <Link href="/login" className="text-link">เข้าสู่ระบบ</Link>
+              </div>
+            </section>
+          )}
+        </aside>
       </div>
-
-      <ProvenancePanel agencyName={tor.agencyName} source={tor.source} documents={documents} documentsLoading={documentsLoading} />
-
-      <article className="panel extracted-fields-panel">
-        <div className="panel-title"><h2>รายละเอียดที่สกัดโดย AI</h2></div>
-        <dl className="extracted-fields-list">
-          {tor.fields.procurementMethod?.value ? (
-            <div><dt>วิธีการจัดซื้อจัดจ้าง</dt><dd>{PROCUREMENT_METHOD_LABEL[String(tor.fields.procurementMethod.value)] ?? String(tor.fields.procurementMethod.value)}{tor.fields.procurementMethod.caution && <span className="caution-badge">ควรตรวจสอบ</span>}</dd></div>
-          ) : null}
-          {typeof budget === "number" ? (
-            <div><dt>งบประมาณโดยประมาณ</dt><dd>{formatThb(budget)}{tor.fields.budget?.caution && <span className="caution-badge">ควรตรวจสอบ</span>}</dd></div>
-          ) : null}
-          {tor.fields.estimatedComplexity?.value ? (
-            <div><dt>ความซับซ้อนของโครงการ</dt><dd>{COMPLEXITY_LABEL[String(tor.fields.estimatedComplexity.value)] ?? String(tor.fields.estimatedComplexity.value)}</dd></div>
-          ) : null}
-          {tor.fields.description?.value ? (
-            <div><dt>รายละเอียดโครงการ</dt><dd>{String(tor.fields.description.value)}{tor.fields.description.caution && <span className="caution-badge">ควรตรวจสอบ</span>}</dd></div>
-          ) : null}
-          {requiredTechnologies.length > 0 && (
-            <div><dt>เทคโนโลยีที่ต้องใช้</dt><dd><div className="tor-tags">{requiredTechnologies.map((tech) => <span key={tech}>{tech}</span>)}</div></dd></div>
-          )}
-          {deliverables.length > 0 && (
-            <div><dt>ผลงานที่ต้องส่งมอบ</dt><dd><ul>{deliverables.map((item) => <li key={item}>{item}</li>)}</ul></dd></div>
-          )}
-          {evaluationCriteria.length > 0 && (
-            <div><dt>เกณฑ์การประเมิน</dt><dd><ul>{evaluationCriteria.map((item) => <li key={item}>{item}</li>)}</ul></dd></div>
-          )}
-          {keyRisks.length > 0 && (
-            <div><dt>ความเสี่ยงสำคัญ</dt><dd><ul>{keyRisks.map((item) => <li key={item}>{item}</li>)}</ul></dd></div>
-          )}
-        </dl>
-      </article>
     </main>
   );
 }
