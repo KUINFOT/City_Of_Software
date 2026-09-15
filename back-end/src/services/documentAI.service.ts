@@ -1,6 +1,12 @@
 import { DocumentProcessorServiceClient } from '@google-cloud/documentai';
+import { PDFDocument } from 'pdf-lib';
 import { gcpConfig } from '../config/gcpConfig';
 import { ExtractionResult } from '../types/document';
+
+/** Document AI's synchronous-processing page cap with imagelessMode on —
+ *  see the comment on the processDocument call below. Anything longer has
+ *  to be split into calls this size or smaller. */
+const MAX_PAGES_PER_CALL = 30;
 
 /**
  * Lazily-constructed, memoized client — mirrors gemini.service.ts's
@@ -51,6 +57,13 @@ function getClient(): DocumentProcessorServiceClient {
  * Falls back to a deterministic stub whenever `GCP_PROJECT_ID` is unset, so
  * this works in any environment without live credentials — including CI and
  * this repo's own `npm test`, which exercises exactly that fallback branch.
+ *
+ * PDFs longer than `MAX_PAGES_PER_CALL` are split into same-sized chunks
+ * and processed as separate synchronous calls (see `extractTextInChunks`),
+ * rather than needing Document AI's async batch API (which reads/writes
+ * through Cloud Storage — infrastructure this project doesn't have set up).
+ * A real TOR bundle running to 40, 60, even 80+ pages is common enough that
+ * this isn't an edge case worth leaving as a hard failure.
  */
 export async function extractText(buffer: Buffer, mimeType: string): Promise<ExtractionResult> {
   const ocrUsed = mimeType !== 'text/plain';
@@ -67,6 +80,19 @@ export async function extractText(buffer: Buffer, mimeType: string): Promise<Ext
     };
   }
 
+  if (mimeType === 'application/pdf') {
+    const pageCount = await countPdfPages(buffer);
+    if (pageCount > MAX_PAGES_PER_CALL) {
+      return extractTextInChunks(buffer, mimeType, pageCount, ocrUsed);
+    }
+  }
+
+  return processOnce(buffer, mimeType, ocrUsed);
+}
+
+/** One synchronous Document AI call — the whole of what `extractText` used
+ *  to do inline, now reused per-chunk too. */
+async function processOnce(buffer: Buffer, mimeType: string, ocrUsed: boolean): Promise<ExtractionResult> {
   const name =
     `projects/${gcpConfig.projectId}/locations/${gcpConfig.location}` +
     `/processors/${gcpConfig.docAiProcessorId}`;
@@ -77,8 +103,8 @@ export async function extractText(buffer: Buffer, mimeType: string): Promise<Ext
     // Synchronous processing caps out at 15 pages without this — a common
     // failure on real TOR bundles, which routinely run longer. Imageless
     // mode (the response omits page images, which this pipeline never reads
-    // anyway) raises that to 30; anything past 30 pages still needs async
-    // batch processing, which this synchronous call can't do.
+    // anyway) raises that to 30 (MAX_PAGES_PER_CALL) — anything past that
+    // is chunked by the caller before it ever reaches here.
     imagelessMode: true,
   });
 
@@ -95,6 +121,55 @@ export async function extractText(buffer: Buffer, mimeType: string): Promise<Ext
     text: doc?.text ?? '',
     pageCount: pages.length,
     confidence,
+    ocrUsed,
+  };
+}
+
+async function countPdfPages(buffer: Buffer): Promise<number> {
+  const pdf = await PDFDocument.load(buffer, { ignoreEncryption: true });
+  return pdf.getPageCount();
+}
+
+/**
+ * Splits a PDF into `MAX_PAGES_PER_CALL`-page (or smaller) chunks, runs each
+ * through its own synchronous Document AI call, and stitches the results
+ * back into one `ExtractionResult` — text joined in page order, confidence
+ * page-weighted across every chunk (not a plain average of chunk averages,
+ * which would let one thin, high-confidence chunk outweigh a large,
+ * uncertain one).
+ */
+async function extractTextInChunks(
+  buffer: Buffer,
+  mimeType: string,
+  pageCount: number,
+  ocrUsed: boolean
+): Promise<ExtractionResult> {
+  const source = await PDFDocument.load(buffer, { ignoreEncryption: true });
+
+  const texts: string[] = [];
+  let weightedConfidence = 0;
+  let totalPages = 0;
+
+  for (let start = 0; start < pageCount; start += MAX_PAGES_PER_CALL) {
+    const end = Math.min(start + MAX_PAGES_PER_CALL, pageCount);
+    const indices = Array.from({ length: end - start }, (_, i) => start + i);
+
+    const chunk = await PDFDocument.create();
+    const copiedPages = await chunk.copyPages(source, indices);
+    for (const page of copiedPages) chunk.addPage(page);
+    const chunkBuffer = Buffer.from(await chunk.save());
+
+    const result = await processOnce(chunkBuffer, mimeType, ocrUsed);
+    texts.push(result.text);
+    const pagesInChunk = result.pageCount || end - start;
+    weightedConfidence += result.confidence * pagesInChunk;
+    totalPages += pagesInChunk;
+  }
+
+  return {
+    text: texts.join('\n\n'),
+    pageCount: totalPages,
+    confidence: totalPages > 0 ? weightedConfidence / totalPages : 0,
     ocrUsed,
   };
 }

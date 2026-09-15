@@ -191,11 +191,22 @@ export default function ReviewRecordPage() {
                 <div className="review-field">
                   <div className="review-field__label"><strong>เอกสารต้นฉบับ</strong></div>
                   <div>
-                    {record.documentIds.length === 0 ? "ไม่มีเอกสารแนบ" : record.documentIds.map((docId, i) => (
-                      <a key={docId} href={`${process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000/api"}/documents/${docId}/file`} target="_blank" rel="noreferrer">
-                        <FileText size={12} /> เอกสารที่ {i + 1}
-                      </a>
-                    ))}
+                    {record.documents.length === 0 ? (
+                      "ไม่มีเอกสารที่เปิดดูได้"
+                    ) : (
+                      record.documents.map((doc) => (
+                        doc.fileUrl ? (
+                          <a key={doc._id} href={`${process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000/api"}${doc.fileUrl}`} target="_blank" rel="noreferrer">
+                            <FileText size={12} /> {doc.originalName}
+                          </a>
+                        ) : (
+                          <span key={doc._id}><FileText size={12} /> {doc.originalName} (ไม่มีไฟล์ต้นฉบับ)</span>
+                        )
+                      ))
+                    )}
+                    {record.documentIds.length > record.documents.length && (
+                      <em><AlertTriangle size={12} /> {record.documentIds.length - record.documents.length} เอกสารที่เชื่อมโยงไว้ไม่มีอยู่ในระบบแล้ว</em>
+                    )}
                   </div>
                 </div>
                 {record.summaryAi?.text && (

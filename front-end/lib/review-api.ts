@@ -26,6 +26,10 @@ export type ReviewRecord = {
   evaluationCriteria?: Array<{ criterion: string; weightPercent?: number }>;
   timeline?: Record<string, string | null | undefined>;
   documentIds: string[];
+  // Resolved from real Document rows by the backend — excludes any id in
+  // documentIds that no longer points to an actual document, so every link
+  // here is guaranteed to work rather than 404ing.
+  documents: Array<{ _id: string; originalName: string; fileUrl: string | null }>;
   duplicateStatus: "none" | "suspected" | "confirmed";
   duplicateOf?: string | null;
   extraction?: {
