@@ -5,6 +5,7 @@ import { Plus, Trash2 } from "lucide-react";
 import { AccountShell } from "@/components/account-shell";
 import { useAuth } from "@/components/auth-provider";
 import { getVendorProfile, saveVendorProfile, VendorProfile } from "@/lib/vendor-profile";
+import { Agency, getAgencies } from "@/lib/agencies-api";
 
 const initialSearches = [
   { title: "CCTV surveillance & smart computer vision integrations", filter: "BMA Sathon & Pathum Wan Districts only" },
@@ -21,8 +22,10 @@ export default function SettingsPage() {
   const [searches, setSearches] = useState(initialSearches);
   const [saved, setSaved] = useState(false);
   const [profileError, setProfileError] = useState("");
-  const [profile, setProfile] = useState<VendorProfile>({ organizationType: "company", companyName: user?.organization ?? "", techStack: [], serviceCategories: [], certifications: [], notificationPrefs: { frequency: "instant" } });
-  useEffect(() => { if (user?.id && user.role === "vendor") getVendorProfile(user.id).then((savedProfile) => { if (savedProfile) setProfile({ notificationPrefs: { frequency: "instant" }, ...savedProfile }); }).catch(() => setProfileError("ไม่สามารถโหลดโปรไฟล์คุณสมบัติได้")); }, [user?.id, user?.role]);
+  const [profile, setProfile] = useState<VendorProfile>({ organizationType: "company", companyName: user?.organization ?? "", techStack: [], serviceCategories: [], certifications: [], notificationPrefs: { frequency: "instant" }, interests: { agencyIds: [], keywords: [] } });
+  const [agencies, setAgencies] = useState<Agency[]>([]);
+  useEffect(() => { if (user?.id && user.role === "vendor") getVendorProfile(user.id).then((savedProfile) => { if (savedProfile) setProfile({ notificationPrefs: { frequency: "instant" }, interests: { agencyIds: [], keywords: [] }, ...savedProfile }); }).catch(() => setProfileError("ไม่สามารถโหลดโปรไฟล์คุณสมบัติได้")); }, [user?.id, user?.role]);
+  useEffect(() => { if (user?.role === "vendor") getAgencies().then(setAgencies).catch(() => setAgencies([])); }, [user?.role]);
   async function saveProfile() {
     if (!user?.id || user.role !== "vendor") return;
     setProfileError("");
@@ -65,6 +68,53 @@ export default function SettingsPage() {
                   <option value="daily_digest">สรุปรวมส่งวันละครั้ง</option>
                 </select>
               </div>
+            )}
+            {user?.role === "vendor" && (
+              <div className="form-field" style={{ marginBottom: "1rem" }}>
+                <span>หน่วยงานที่ติดตามเพิ่มเติม (นอกเหนือจากการจับคู่โปรไฟล์)</span>
+                <div className="followed-agencies">
+                  {agencies.length === 0 ? (
+                    <p style={{ fontSize: "0.8rem", color: "#788498" }}>ยังไม่มีหน่วยงานให้เลือกติดตาม</p>
+                  ) : (
+                    agencies.map((agency) => {
+                      const checked = profile.interests?.agencyIds.includes(agency._id) ?? false;
+                      return (
+                        <label key={agency._id} className="followed-agency-option">
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={(event) =>
+                              setProfile((current) => {
+                                const currentIds = current.interests?.agencyIds ?? [];
+                                const agencyIds = event.target.checked
+                                  ? [...currentIds, agency._id]
+                                  : currentIds.filter((id) => id !== agency._id);
+                                return { ...current, interests: { agencyIds, keywords: current.interests?.keywords ?? [] } };
+                              })
+                            }
+                          />
+                          {agency.name}
+                        </label>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+            )}
+            {user?.role === "vendor" && (
+              <label className="form-field" style={{ marginBottom: "1rem" }}>
+                คำสำคัญที่ติดตาม (คั่นด้วยจุลภาค)
+                <input
+                  value={(profile.interests?.keywords ?? []).join(", ")}
+                  onChange={(event) =>
+                    setProfile((current) => ({
+                      ...current,
+                      interests: { agencyIds: current.interests?.agencyIds ?? [], keywords: event.target.value.split(",").map((item) => item.trim()).filter(Boolean) },
+                    }))
+                  }
+                  placeholder="น้ำท่วม, CCTV, ระบบระบายน้ำ"
+                />
+              </label>
             )}
             {notificationLabels.map(([title, description], index) => (
               <div className="toggle-row" key={title}><Toggle checked={toggles[index]} onChange={() => setToggles((current) => current.map((value, i) => i === index ? !value : value))} /><div><strong>{title}</strong><p>{description}</p></div></div>

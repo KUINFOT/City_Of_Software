@@ -38,7 +38,14 @@ const vendorProfileSchema = new Schema(
       projectTypes: [String],
       technologies: [String],
       budgetRange: { minThb: Number, maxThb: Number },
+      // Followed agencies (SCRUM-98/99, UC-07) — an explicit watchlist a
+      // vendor curates on top of profile-based matching, distinct from
+      // techStack/projectTypes above (which describe the vendor's own
+      // capabilities, not what they've chosen to track).
       agencyIds: [{ type: Schema.Types.ObjectId, ref: 'Agency' }],
+      // Free-text terms a vendor wants matched against a TOR's title,
+      // independent of technologies/projectTypes.
+      keywords: [String],
     },
     notificationPrefs: {
       channels: { type: [String], default: ['email', 'in_app'] },

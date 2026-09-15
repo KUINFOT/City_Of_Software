@@ -8,6 +8,7 @@ export type VendorProfile = {
   certifications: { name: string; issuer: string }[];
   totalContractValueThb?: number;
   notificationPrefs?: { frequency: "instant" | "daily_digest" };
+  interests?: { agencyIds: string[]; keywords: string[] };
 };
 
 const apiBaseUrl = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000/api';

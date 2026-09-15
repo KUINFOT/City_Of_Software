@@ -82,7 +82,7 @@ export type QualificationMatchResult = {
   overallStatus: 'all_met' | 'gaps_found' | 'undetermined' | 'no_requirements';
 };
 
-export type MatchReasonType = 'technology' | 'project_type' | 'budget' | 'agency';
+export type MatchReasonType = 'technology' | 'project_type' | 'budget' | 'agency' | 'keyword';
 export type MatchReason = { type: MatchReasonType; label: string; detail: string };
 export type MatchReasonsResult = { score: number; reasons: MatchReason[] };
 

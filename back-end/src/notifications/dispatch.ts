@@ -20,8 +20,15 @@ import { UserModel } from '../models/User';
 import { VendorProfileModel } from '../models/VendorProfile';
 import { computeMatchReasons, type MatchReason } from '../matching/matchReasons';
 import { sendEmail } from '../services/email.service';
+import { createUnsubscribeToken } from '../services/unsubscribe.service';
+import { env } from '../config/env';
 import { renderStageNotificationEmail, type StageNotificationType } from './templates';
 import type { Logger } from '../extraction/core/logger';
+
+/** SCRUM-102: every dispatched email carries this vendor's own unsubscribe link. */
+function unsubscribeUrl(userId: Types.ObjectId): string {
+  return `${env.publicApiUrl}/vendor-profiles/unsubscribe?token=${createUnsubscribeToken(String(userId))}`;
+}
 
 export interface TorForNotification {
   _id: Types.ObjectId;
@@ -57,7 +64,7 @@ async function dispatchEmail(
       await NotificationModel.updateOne({ _id: notificationId }, { $set: { status: 'failed' } });
       return;
     }
-    const { subject, text, html } = renderStageNotificationEmail(tor, type, reasons, { referencesEarlierAlert });
+    const { subject, text, html } = renderStageNotificationEmail(tor, type, reasons, unsubscribeUrl(userId), { referencesEarlierAlert });
     await sendEmail({ to: user.email, subject, text, html });
     await NotificationModel.updateOne({ _id: notificationId }, { $set: { status: 'sent', sentAt: new Date() } });
   } catch (err) {
@@ -95,6 +102,14 @@ export async function notifyMatchingVendors(
       relatedNotificationId = (prior?._id as Types.ObjectId | undefined) ?? null;
     }
 
+    // SCRUM-103: an unsubscribed vendor (channels excludes 'email') never
+    // enters the queued-for-email pool — its row is created already 'sent'
+    // via in_app, since that's the only delivery that will actually happen.
+    // `channels` defaults to ['email','in_app'] on the schema, so absence of
+    // the field (an old profile predating this feature) still means "wants
+    // email," not "opted out."
+    const wantsEmail = profile.notificationPrefs?.channels?.includes('email') !== false;
+
     let row;
     try {
       row = await NotificationModel.create({
@@ -104,8 +119,8 @@ export async function notifyMatchingVendors(
         matchScore: score,
         reasons,
         relatedNotificationId,
-        channel: 'email',
-        status: 'queued',
+        channel: wantsEmail ? 'email' : 'in_app',
+        status: wantsEmail ? 'queued' : 'sent',
       });
     } catch (err) {
       if (isDuplicateKeyError(err)) continue; // already notified this vendor for this TOR/stage
@@ -115,7 +130,7 @@ export async function notifyMatchingVendors(
 
     result.notified += 1;
 
-    if (profile.notificationPrefs?.frequency !== 'daily_digest') {
+    if (wantsEmail && profile.notificationPrefs?.frequency !== 'daily_digest') {
       void dispatchEmail(row._id as Types.ObjectId, profile.userId as Types.ObjectId, tor, type, reasons, relatedNotificationId != null, logger);
     }
   }

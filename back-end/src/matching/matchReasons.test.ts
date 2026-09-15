@@ -3,6 +3,7 @@ import { describe, test } from 'node:test';
 import { computeMatchReasons, type TorMatchLike, type VendorMatchProfileLike } from './matchReasons';
 
 const tor: TorMatchLike = {
+  title: 'ระบบเฝ้าระวังน้ำท่วมด้วยกล้อง CCTV',
   technologies: ['React', 'Node.js'],
   projectType: 'web_application',
   budget: { amountThb: 5_000_000 },
@@ -19,7 +20,7 @@ describe('computeMatchReasons — no vendor profile', () => {
 });
 
 describe('computeMatchReasons — full match', () => {
-  test('matches on all four dimensions and scores 1', () => {
+  test('matches on all five dimensions and scores 1', () => {
     const profile: VendorMatchProfileLike = {
       techStack: ['react', 'express'],
       interests: {
@@ -27,14 +28,41 @@ describe('computeMatchReasons — full match', () => {
         technologies: ['node.js'],
         budgetRange: { minThb: 1_000_000, maxThb: 10_000_000 },
         agencyIds: ['agency-1'],
+        keywords: ['น้ำท่วม'],
       },
     };
     const result = computeMatchReasons(tor, profile);
     assert.equal(result.score, 1);
     assert.deepEqual(
       result.reasons.map((r) => r.type).sort(),
-      ['agency', 'budget', 'project_type', 'technology']
+      ['agency', 'budget', 'keyword', 'project_type', 'technology']
     );
+  });
+});
+
+describe('computeMatchReasons — keyword', () => {
+  test('matches when a followed keyword appears in the TOR title', () => {
+    const profile: VendorMatchProfileLike = { interests: { keywords: ['CCTV'] } };
+    const result = computeMatchReasons(tor, profile);
+    assert.ok(result.reasons.some((r) => r.type === 'keyword'));
+  });
+
+  test('matches case-insensitively', () => {
+    const profile: VendorMatchProfileLike = { interests: { keywords: ['cctv'] } };
+    const result = computeMatchReasons(tor, profile);
+    assert.ok(result.reasons.some((r) => r.type === 'keyword'));
+  });
+
+  test('does not match when no followed keyword appears in the title', () => {
+    const profile: VendorMatchProfileLike = { interests: { keywords: ['ถนน'] } };
+    const result = computeMatchReasons(tor, profile);
+    assert.ok(!result.reasons.some((r) => r.type === 'keyword'));
+  });
+
+  test('leaves keyword uncompared when the TOR has no title', () => {
+    const profile: VendorMatchProfileLike = { interests: { keywords: ['CCTV'] } };
+    const result = computeMatchReasons({ ...tor, title: null }, profile);
+    assert.ok(!result.reasons.some((r) => r.type === 'keyword'));
   });
 });
 
@@ -104,6 +132,6 @@ describe('computeMatchReasons — score', () => {
   test('is an equal-weighted fraction of the matched dimensions', () => {
     const profile: VendorMatchProfileLike = { techStack: ['react'] };
     const result = computeMatchReasons(tor, profile);
-    assert.equal(result.score, 0.25);
+    assert.equal(result.score, 0.2);
   });
 });

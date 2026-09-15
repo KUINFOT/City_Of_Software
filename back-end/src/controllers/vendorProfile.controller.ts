@@ -1,8 +1,16 @@
 import { Request, Response } from 'express';
+import { isValidObjectId } from 'mongoose';
 import { VendorProfileModel } from '../models/VendorProfile';
+import { readUnsubscribeToken } from '../services/unsubscribe.service';
+import { env } from '../config/env';
 
 function list(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string').map((item) => item.trim()).filter(Boolean) : [];
+}
+
+/** Same shape as `list()`, additionally filtered to valid Mongo ObjectId strings. */
+function objectIdList(value: unknown): string[] {
+  return list(value).filter((id) => isValidObjectId(id));
 }
 
 function numberOrUndefined(value: unknown): number | undefined {
@@ -54,6 +62,14 @@ export function buildVendorProfileUpdate(body: Record<string, unknown>) {
   );
   if (frequency) update['notificationPrefs.frequency'] = frequency;
 
+  // SCRUM-98: a vendor's followed-agencies/keywords watchlist, distinct from
+  // the profile-capability fields above.
+  const interests = body.interests as Record<string, unknown> | undefined;
+  if (interests) {
+    update['interests.agencyIds'] = objectIdList(interests.agencyIds);
+    update['interests.keywords'] = list(interests.keywords);
+  }
+
   return update;
 }
 
@@ -74,4 +90,31 @@ export async function saveVendorProfile(req: Request, res: Response): Promise<vo
   } catch (error) {
     res.status(400).json({ error: error instanceof Error ? error.message : 'Unable to save the vendor profile.' });
   }
+}
+
+/**
+ * GET /api/vendor-profiles/unsubscribe?token=... — SCRUM-102/103: a one-click
+ * link opened straight from an email, no session required. Removes 'email'
+ * from notificationPrefs.channels only — 'in_app' stays, so this stops
+ * delivery without disabling the account (FR-NOT-06), and takes effect
+ * immediately for the next dispatch since dispatch.ts/digest.ts read this
+ * field fresh on every run.
+ */
+export async function unsubscribeByToken(req: Request, res: Response): Promise<void> {
+  const token = typeof req.query.token === 'string' ? req.query.token : null;
+  const payload = token ? readUnsubscribeToken(token) : null;
+
+  const redirect = (status: 'unsubscribed' | 'invalid') => {
+    const url = new URL('/unsubscribed', env.appUrl);
+    url.searchParams.set('status', status);
+    res.redirect(302, url.toString());
+  };
+
+  if (!payload) {
+    redirect('invalid');
+    return;
+  }
+
+  await VendorProfileModel.updateOne({ userId: payload.userId }, { $pull: { 'notificationPrefs.channels': 'email' } });
+  redirect('unsubscribed');
 }

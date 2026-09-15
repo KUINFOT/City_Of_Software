@@ -13,12 +13,18 @@
  * treated as a match or a miss.
  *
  * Score is an equal-weighted fraction of the dimensions that matched, out of
- * the 4 checked — a placeholder convention (no existing weighting scheme in
+ * the 5 checked — a placeholder convention (no existing weighting scheme in
  * the codebase to follow) that VendorProfile.notificationPrefs.minMatchScore
  * is already shaped to consume, open to future tuning.
+ *
+ * The `agency` and `keyword` dimensions below are SCRUM-98/99's "followed
+ * agencies and keywords... in ADDITION to profile matching" — a vendor's
+ * explicit watchlist (interests.agencyIds/keywords), independent of the
+ * technology/project-type/budget dimensions derived from their own declared
+ * capabilities.
  */
 
-export type MatchReasonType = 'technology' | 'project_type' | 'budget' | 'agency';
+export type MatchReasonType = 'technology' | 'project_type' | 'budget' | 'agency' | 'keyword';
 
 export interface MatchReason {
   type: MatchReasonType;
@@ -32,6 +38,7 @@ export interface MatchReasonsResult {
 }
 
 export interface TorMatchLike {
+  title?: string | null;
   technologies?: string[] | null;
   projectType?: string | null;
   budget?: { amountThb?: number | null } | null;
@@ -46,6 +53,7 @@ export interface VendorMatchProfileLike {
     technologies?: string[] | null;
     budgetRange?: { minThb?: number | null; maxThb?: number | null } | null;
     agencyIds?: unknown[] | null;
+    keywords?: string[] | null;
   } | null;
 }
 
@@ -56,7 +64,7 @@ const PROJECT_TYPE_LABEL: Record<string, string> = {
   other: 'อื่นๆ',
 };
 
-const DIMENSION_COUNT = 4;
+const DIMENSION_COUNT = 5;
 
 function norm(value: string): string {
   return value.trim().toLowerCase();
@@ -133,11 +141,29 @@ function matchAgency(tor: TorMatchLike, profile: VendorMatchProfileLike | null):
   };
 }
 
+function matchKeyword(tor: TorMatchLike, profile: VendorMatchProfileLike | null): MatchReason | null {
+  const title = tor.title;
+  const keywords = (profile?.interests?.keywords ?? []).filter(
+    (k): k is string => typeof k === 'string' && k.trim().length > 0
+  );
+  if (!title || keywords.length === 0) return null;
+
+  const haystack = norm(title);
+  const matched = keywords.filter((k) => haystack.includes(norm(k)));
+  if (matched.length === 0) return null;
+
+  return {
+    type: 'keyword',
+    label: 'คำสำคัญที่ติดตาม',
+    detail: `ชื่อโครงการมีคำว่า "${matched.join('", "')}" ซึ่งอยู่ในรายการคำสำคัญที่คุณติดตาม`,
+  };
+}
+
 export function computeMatchReasons(
   tor: TorMatchLike,
   vendorProfile: VendorMatchProfileLike | null
 ): MatchReasonsResult {
-  const reasons = [matchTechnology, matchProjectType, matchBudget, matchAgency]
+  const reasons = [matchTechnology, matchProjectType, matchBudget, matchAgency, matchKeyword]
     .map((dimension) => dimension(tor, vendorProfile))
     .filter((reason): reason is MatchReason => reason !== null);
 

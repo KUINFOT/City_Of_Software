@@ -185,7 +185,7 @@ export async function getQualificationMatch(req: Request, res: Response, next: N
 export async function getMatchReasons(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const tor = await TorModel.findOne({ _id: req.params.id, status: 'published' })
-      .select('technologies projectType budget.amountThb agencyId agencyName')
+      .select('title technologies projectType budget.amountThb agencyId agencyName')
       .lean();
     if (!tor) {
       res.status(404).json({ error: 'TOR not found' });

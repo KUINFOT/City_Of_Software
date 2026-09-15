@@ -1,4 +1,4 @@
-export type MatchReasonType = "technology" | "project_type" | "budget" | "agency";
+export type MatchReasonType = "technology" | "project_type" | "budget" | "agency" | "keyword";
 export type MatchReason = { type: MatchReasonType; label: string; detail: string };
 
 export type VendorNotification = {
