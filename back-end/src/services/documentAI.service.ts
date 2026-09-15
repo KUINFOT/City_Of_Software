@@ -74,6 +74,12 @@ export async function extractText(buffer: Buffer, mimeType: string): Promise<Ext
   const [result] = await getClient().processDocument({
     name,
     rawDocument: { content: buffer.toString('base64'), mimeType },
+    // Synchronous processing caps out at 15 pages without this — a common
+    // failure on real TOR bundles, which routinely run longer. Imageless
+    // mode (the response omits page images, which this pipeline never reads
+    // anyway) raises that to 30; anything past 30 pages still needs async
+    // batch processing, which this synchronous call can't do.
+    imagelessMode: true,
   });
 
   const doc = result.document;

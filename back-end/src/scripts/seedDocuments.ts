@@ -142,8 +142,24 @@ async function seed() {
 
     console.log('Connected to MongoDB');
 
-    await DocumentModel.deleteMany({});
-    console.log('Cleared existing documents');
+    const mockNames = mockDocuments.map((doc) => doc.originalName);
+
+    // Scoped to rows THIS script itself owns — matched by filename AND the
+    // absence of torId, which every real document always has (set by
+    // extraction/pipeline/attachments.ts for scraped attachments, and by
+    // controllers/review.controller.ts for admin manual uploads). This used
+    // to be an unconditional `deleteMany({})`, which wiped every real
+    // scraped/uploaded document in the collection the one time it ran —
+    // including the source documents backing every published, vendor-facing
+    // TOR at the time. A re-run of this script must never be able to do
+    // that again, regardless of how much real data has since accumulated.
+    const otherDocCount = await DocumentModel.countDocuments({ originalName: { $nin: mockNames } });
+    if (otherDocCount > 0) {
+      console.log(`${otherDocCount} other document(s) in the collection — left untouched.`);
+    }
+
+    const { deletedCount } = await DocumentModel.deleteMany({ originalName: { $in: mockNames }, torId: null });
+    console.log(`Cleared ${deletedCount} previously-seeded mock document(s)`);
 
     const documents = await DocumentModel.insertMany(mockDocuments);
 

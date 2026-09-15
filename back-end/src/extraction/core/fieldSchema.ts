@@ -57,15 +57,23 @@ export interface FieldExtraction<T = unknown> {
 
 export interface StructuredExtractionResult {
   fields: Record<ExtractedFieldKey, FieldExtraction>;
-  /** FR-EXT-03's standardised natural-language summary. */
+  /** FR-EXT-03's standardised natural-language summary. Empty when it
+   *  failed the same grounding check every structured field gets — see
+   *  gemini.service.ts's groundAndScore. */
   summary: string;
+  /** The model's own confidence in `summary`, zeroed out by groundAndScore
+   *  when the summary doesn't ground — mirrors a FieldExtraction's
+   *  `confidence`, just without a matching value/evidence pair since a
+   *  free-text summary isn't a single field. */
+  summaryConfidence: number;
   /** FR-EXT-04 — the document's dominant language, as actually observed. */
   language: 'th' | 'en' | 'mixed';
   /** Recomputed by the caller from kept-field confidence; never trusted
    *  verbatim from the model — see gemini.service.ts. */
   overallConfidence: number;
   /** Field keys the model returned but which failed grounding and were
-   *  discarded (FR-EXT-09). */
+   *  discarded (FR-EXT-09). Includes the literal string `'summary'` when
+   *  the free-text summary itself was discarded for the same reason. */
   discardedFields: string[];
 }
 
@@ -102,5 +110,5 @@ export function emptyExtraction(summary: string, language: StructuredExtractionR
   const fields = Object.fromEntries(
     EXTRACTED_FIELD_KEYS.map((key) => [key, { value: null, confidence: 0, evidence: null }])
   ) as Record<ExtractedFieldKey, FieldExtraction>;
-  return { fields, summary, language, overallConfidence: 0, discardedFields: [] };
+  return { fields, summary, summaryConfidence: 0, language, overallConfidence: 0, discardedFields: [] };
 }

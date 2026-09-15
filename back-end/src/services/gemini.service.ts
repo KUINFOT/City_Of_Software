@@ -119,6 +119,11 @@ interface RawFieldOutput {
 interface RawModelOutput {
   fields: Record<string, RawFieldOutput>;
   summary: string;
+  /** Verbatim source-text quotes backing the summary's claims — the same
+   *  evidence contract as a field's `evidence`, just one-to-many since a
+   *  summary makes several claims at once. */
+  summaryEvidence: string[];
+  summaryConfidence: number;
   language: 'th' | 'en' | 'mixed';
 }
 
@@ -128,12 +133,16 @@ function parseModelOutput(raw: string): RawModelOutput {
     return {
       fields: obj.fields ?? {},
       summary: obj.summary ?? '',
+      summaryEvidence: Array.isArray(obj.summaryEvidence)
+        ? obj.summaryEvidence.filter((quote): quote is string => typeof quote === 'string')
+        : [],
+      summaryConfidence: typeof obj.summaryConfidence === 'number' ? obj.summaryConfidence : 0,
       language: obj.language ?? 'mixed',
     };
   } catch {
     // A model that fails to return valid JSON has effectively found
     // nothing we can trust — every field is null rather than guessed.
-    return { fields: {}, summary: '', language: 'mixed' };
+    return { fields: {}, summary: '', summaryEvidence: [], summaryConfidence: 0, language: 'mixed' };
   }
 }
 
@@ -167,9 +176,27 @@ function groundAndScore(sourceText: string, raw: RawModelOutput): StructuredExtr
       : (keptConfidences.reduce((a, b) => a + b, 0) / keptConfidences.length) *
         (keptConfidences.length / EXTRACTED_FIELD_KEYS.length);
 
+  // FR-EXT-09 applies to the free-text summary exactly as it does to every
+  // structured field above — a claim not traceable to the source text is
+  // not published, no matter how fluent it reads. This was previously the
+  // one place in the pipeline that skipped the grounding check entirely:
+  // every structured field got discarded when ungrounded, but `summary`
+  // was written straight through, so a hallucinated summary could (and
+  // did) reach a published record even when every individual field
+  // correctly came back empty. Every quote in `summaryEvidence` must
+  // independently appear in the source — one bad quote discards the whole
+  // summary, same as a field never gets partial credit for a claim that's
+  // half-grounded.
+  const summaryGrounded =
+    raw.summary.trim().length > 0 &&
+    raw.summaryEvidence.length > 0 &&
+    raw.summaryEvidence.every((quote) => verifyGrounding(sourceText, quote));
+  if (!summaryGrounded) discardedFields.push('summary');
+
   return {
     fields,
-    summary: raw.summary,
+    summary: summaryGrounded ? raw.summary : '',
+    summaryConfidence: summaryGrounded ? clamp01(raw.summaryConfidence) : 0,
     language: raw.language,
     overallConfidence,
     discardedFields,
@@ -192,7 +219,15 @@ function buildPrompt(sourceText: string): string {
     '- Assign each field your own confidence in [0,1] reflecting how certain you are the value is correct and complete.',
     '- Normalise "budget" to a THB amount. If the source uses a Buddhist Era year anywhere relevant to a date field, convert it to the Gregorian calendar (subtract 543).',
     '- Report "language" for the document overall as "th", "en", or "mixed".',
-    '- Write "summary" as a concise, standardised natural-language summary of the document.',
+    '- Write "summary" as a concise, standardised natural-language summary of the document. Never state a ' +
+      'specific number, name, date, or amount in the summary unless it is stated in the text — if you cannot ' +
+      'verify a detail, describe the document in more general terms instead of inventing the specific.',
+    '- For "summary", also supply "summaryEvidence": 2-5 EXACT verbatim quotes from the source text that ' +
+      'together support every specific claim in the summary. A summary whose claims are not backed by ' +
+      'matching quotes will be discarded entirely, so do not include a quote unless it genuinely appears in ' +
+      'the text above.',
+    '- Assign "summaryConfidence" in [0,1] the same way as a field\'s confidence, reflecting how certain you ' +
+      'are the summary is both accurate and complete.',
     '',
     'Document text:',
     '"""',
@@ -223,8 +258,10 @@ function buildResponseSchema(): Schema {
     properties: {
       fields: { type: Type.OBJECT, properties: fieldsProperties },
       summary: { type: Type.STRING },
+      summaryEvidence: { type: Type.ARRAY, items: { type: Type.STRING } },
+      summaryConfidence: { type: Type.NUMBER },
       language: { type: Type.STRING, enum: ['th', 'en', 'mixed'] },
     },
-    required: ['fields', 'summary', 'language'],
+    required: ['fields', 'summary', 'summaryEvidence', 'summaryConfidence', 'language'],
   };
 }
