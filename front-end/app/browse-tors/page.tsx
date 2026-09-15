@@ -5,7 +5,7 @@ import { BrowseTorsClient } from "./browse-tors-client";
 export default function BrowseTorsPage() {
   return (
     <>
-      <SiteHeader active="Browse TORs" />
+      <SiteHeader active="ค้นหา TOR" />
       <Suspense>
         <BrowseTorsClient />
       </Suspense>

@@ -43,6 +43,22 @@ export type TorOutlier = {
 
 export type TorAgencyContact = { address: string | null; email: string | null; phone: string | null } | null;
 
+/** GET /api/tors's row shape — deliberately thinner than TorDetail, matching
+ *  that endpoint's own `.select()` (see tor.controller.ts's listTors). */
+export type TorSummary = {
+  _id: string;
+  title: string;
+  agencyName: string;
+  // Nested paths Mongoose's .select() projected — each parent key is
+  // dropped from the response entirely (not sent as {}) on any record
+  // where nothing under it was actually set, so every one of these is
+  // genuinely optional, not just its leaf values.
+  budget?: { amountThb: number | null } | null;
+  timeline?: { submissionDeadline: string | null };
+  lifecycle?: { stage: string };
+  createdAt: string;
+};
+
 export type TorDetail = {
   _id: string;
   title: string;
@@ -101,6 +117,13 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export function getTor(id: string): Promise<TorDetail> {
   return request(`/tors/${id}`);
+}
+
+/** GET /api/tors — published records only, newest first (BR-03). No
+ *  server-side search/filter yet, so the browse page fetches the max page
+ *  size and filters client-side — fine at today's record counts. */
+export function listTors(limit = 200): Promise<TorSummary[]> {
+  return request(`/tors?limit=${limit}`);
 }
 
 export async function getTorDocuments(id: string): Promise<TorDocument[]> {
