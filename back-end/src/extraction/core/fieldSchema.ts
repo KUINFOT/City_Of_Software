@@ -75,6 +75,13 @@ export interface StructuredExtractionResult {
    *  discarded (FR-EXT-09). Includes the literal string `'summary'` when
    *  the free-text summary itself was discarded for the same reason. */
   discardedFields: string[];
+  /** Only set by extractFromDocument's multimodal path: the model's own
+   *  transcription of the document it read directly, which every field's
+   *  evidence is grounded against instead of a separate OCR pass — see
+   *  that function's doc comment for why. Undefined for the OCR-text path,
+   *  where the caller already has its own source text (Document.extractedText
+   *  keeps whichever of the two actually produced this result). */
+  transcription?: string;
 }
 
 /**

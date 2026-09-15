@@ -13,11 +13,12 @@
  */
 
 import { Types } from 'mongoose';
+import { PDFDocument } from 'pdf-lib';
 import { DocumentModel } from '../../models/Document';
 import { ExtractionJobModel } from '../../models/ExtractionJob';
 import { TorModel } from '../../models/Tor';
 import { extractText } from '../../services/documentAI.service';
-import { extractStructuredFields } from '../../services/gemini.service';
+import { canReadDirectly, extractFromDocument, extractStructuredFields } from '../../services/gemini.service';
 import {
   EXTRACTED_FIELD_KEYS,
   EXTRACTION_PROMPT_VERSION,
@@ -155,8 +156,36 @@ async function processDocument(document: DocumentLike, store: BlobStore, logger:
 
   const started = Date.now();
   const buffer = await store.get(document.origin.storageKey);
-  const ocr = await extractText(buffer, document.mimeType);
-  const structured = await extractStructuredFields(ocr.text, {});
+  const rawDocument = { buffer, mimeType: document.mimeType };
+
+  // PRIMARY path: Gemini reads the raw document directly whenever it's a
+  // type/size it can (see canReadDirectly). Document AI is skipped
+  // entirely here — not just for grounding — because it was found
+  // (2026-09-15) to reliably produce corrupted text for this project's
+  // real documents (see extractFromDocument's own doc comment), so there's
+  // nothing useful left for it to contribute, and skipping it saves a real
+  // API call. Falls back to the OCR-text path only for what Gemini can't
+  // read directly (docx/xlsx, or an oversized file).
+  let structured: StructuredExtractionResult;
+  let extractedText: string;
+  let pageCount: number;
+  let ocrUsed: boolean;
+  let ocrConfidence: number;
+
+  if (canReadDirectly(rawDocument)) {
+    structured = await extractFromDocument(rawDocument, {});
+    extractedText = structured.transcription ?? '';
+    pageCount = await countPagesLocally(buffer, document.mimeType);
+    ocrUsed = false;
+    ocrConfidence = 0;
+  } else {
+    const ocr = await extractText(buffer, document.mimeType);
+    structured = await extractStructuredFields(ocr.text, {});
+    extractedText = ocr.text;
+    pageCount = ocr.pageCount;
+    ocrUsed = ocr.ocrUsed;
+    ocrConfidence = ocr.confidence;
+  }
   const processingTimeMs = Date.now() - started;
 
   // A TOR's documents are swept independently, often minutes or days apart,
@@ -171,7 +200,7 @@ async function processDocument(document: DocumentLike, store: BlobStore, logger:
     finishedAt: new Date(),
     modelVersion: extractModelVersionLabel(),
     promptVersion: EXTRACTION_PROMPT_VERSION,
-    ocrUsed: ocr.ocrUsed,
+    ocrUsed,
     language: structured.language,
     // This job's own isolated confidence — an honest record of what THIS
     // attempt found, distinct from the TOR-level rollup below.
@@ -190,10 +219,10 @@ async function processDocument(document: DocumentLike, store: BlobStore, logger:
     {
       $set: {
         status: 'extracted',
-        extractedText: ocr.text,
+        extractedText,
         summary: structured.summary,
-        'metadata.pageCount': ocr.pageCount,
-        'metadata.confidence': ocr.confidence,
+        'metadata.pageCount': pageCount,
+        'metadata.confidence': ocrConfidence,
         'extraction.lastAttemptAt': new Date(),
       },
       $inc: { 'extraction.attempts': 1 },
@@ -216,6 +245,16 @@ function extractModelVersionLabel(): string {
   // in gcpConfig.ts previously disagreed (gemini-2.0-flash vs the real
   // working default), which this single-source-of-truth read prevents.
   return gcpConfig.vertexModel;
+}
+
+/** Page count for the multimodal path, which never calls Document AI (the
+ *  usual source of this number) — cheap and local rather than paying for an
+ *  API call just to learn a page count. Only PDFs have a real notion of
+ *  "pages" among the multimodal-capable types; every image is one page. */
+async function countPagesLocally(buffer: Buffer, mimeType: string): Promise<number> {
+  if (mimeType !== 'application/pdf') return 1;
+  const pdf = await PDFDocument.load(buffer, { ignoreEncryption: true });
+  return pdf.getPageCount();
 }
 
 function fieldConfidenceMap(fields: Record<ExtractedFieldKey, FieldExtraction>): Map<string, number> {

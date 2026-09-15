@@ -62,7 +62,35 @@ export async function summarize(text: string): Promise<string> {
 }
 
 /**
- * Structured field extraction (FR-EXT-02/03/05/06/09).
+ * A raw document Gemini can read directly (multimodal). Only PDF/image mime
+ * types are meaningful here — Gemini has no native document understanding
+ * for a raw .docx/.xlsx the way it does for a PDF page image — and only up
+ * to `MAX_INLINE_DOCUMENT_BYTES`, Gemini's practical inline-request ceiling.
+ * `extractFromDocument` is the only thing that reads this; anything outside
+ * either limit has to go through `extractStructuredFields`'s OCR-text path
+ * instead (see aiExtraction.ts's `processDocument`, which decides which).
+ */
+export interface RawDocumentInput {
+  buffer: Buffer;
+  mimeType: string;
+}
+
+/** Gemini's inline-request size ceiling is ~20MB total including the
+ *  base64-inflated payload (~4/3 of raw bytes) plus the prompt text — this
+ *  leaves headroom under that rather than risking a request-too-large
+ *  failure on an otherwise-fine document. */
+const MAX_INLINE_DOCUMENT_BYTES = 14 * 1024 * 1024;
+
+const MULTIMODAL_MIME_TYPES = new Set(['application/pdf', 'image/jpeg', 'image/png', 'image/tiff']);
+
+export function canReadDirectly(document: RawDocumentInput): boolean {
+  return MULTIMODAL_MIME_TYPES.has(document.mimeType) && document.buffer.length <= MAX_INLINE_DOCUMENT_BYTES;
+}
+
+/**
+ * Structured field extraction from OCR'd text (FR-EXT-02/03/05/06/09) — the
+ * fallback path for documents `extractFromDocument` can't read directly
+ * (non-PDF/image mime types, or over Gemini's inline size limit).
  *
  * Every non-null field the model returns is passed through
  * `verifyGrounding` against the source text before being trusted — a field
@@ -98,7 +126,7 @@ export async function extractStructuredFields(
 
   const response = await getClient().models.generateContent({
     model: gcpConfig.vertexModel,
-    contents: buildPrompt(sourceText),
+    contents: buildPrompt({ multimodal: false, sourceText }),
     config: {
       responseMimeType: 'application/json',
       responseSchema: buildResponseSchema(),
@@ -108,6 +136,73 @@ export async function extractStructuredFields(
   const parsed = parseModelOutput(response.text ?? '{}');
 
   return groundAndScore(sourceText, parsed);
+}
+
+/**
+ * Structured field extraction reading the RAW document directly — the
+ * PRIMARY path (see aiExtraction.ts's `processDocument`), not a fallback.
+ *
+ * Exists because Document AI's OCR was found (2026-09-15, live investigation)
+ * to reliably produce corrupted, unreadable text for this project's actual
+ * documents — 15/15 sampled across every source came back garbled, not an
+ * occasional bad scan — while Gemini reading the identical raw PDF bytes
+ * produced fluent, accurate, grammatically correct Thai. The likely cause is
+ * a broken/non-standard font encoding embedded in these Thai government
+ * PDFs (a known issue with the tooling that generates them): Document AI
+ * appears to be trusting that broken encoding rather than genuinely OCR-ing
+ * the rendered page, and no amount of downstream prompt or model tuning can
+ * recover from OCR text that was never right to begin with.
+ *
+ * The one thing this can't do that the OCR-text path could: use an
+ * independently-produced text to verify claims against. There's no
+ * Document-AI-derived ground truth here at all — Document AI isn't called
+ * for a document this function is used on. Instead, the model is asked to
+ * produce its own `transcription` of what it read ALONGSIDE the structured
+ * fields, and every field's evidence is grounded against THAT — same
+ * `verifyGrounding` mechanism as the OCR path, just checking self-consistency
+ * (does this field's claimed quote actually appear in what the model itself
+ * transcribed?) rather than independent-source agreement. That's a strictly
+ * weaker guarantee than checking against a second, unrelated source, and is
+ * the acknowledged tradeoff of this path: it catches a model contradicting
+ * its own reading, not a model confidently misreading a genuinely ambiguous
+ * or damaged document. Given the alternative was grounding against text that
+ * was reliably wrong 100% of the time, it's still a real improvement.
+ *
+ * The returned `transcription` is also what the caller should store as
+ * `Document.extractedText` going forward — it's the accurate one.
+ */
+export async function extractFromDocument(
+  document: RawDocumentInput,
+  opts: { language?: 'th' | 'en' } = {}
+): Promise<StructuredExtractionResult> {
+  if (!gcpConfig.projectId) {
+    return emptyExtraction(
+      '[stub] Structured extraction placeholder. Set GCP_PROJECT_ID and VERTEX_AI_MODEL to enable ' +
+        'real field extraction.',
+      opts.language ?? 'en'
+    );
+  }
+
+  const response = await getClient().models.generateContent({
+    model: gcpConfig.vertexModel,
+    contents: [
+      {
+        role: 'user',
+        parts: [
+          { text: buildPrompt({ multimodal: true }) },
+          { inlineData: { mimeType: document.mimeType, data: document.buffer.toString('base64') } },
+        ],
+      },
+    ],
+    config: {
+      responseMimeType: 'application/json',
+      responseSchema: buildResponseSchema({ multimodal: true }),
+    },
+  });
+
+  const parsed = parseModelOutput(response.text ?? '{}');
+  const scored = groundAndScore(parsed.transcription, parsed);
+  return { ...scored, transcription: parsed.transcription };
 }
 
 interface RawFieldOutput {
@@ -125,6 +220,10 @@ interface RawModelOutput {
   summaryEvidence: string[];
   summaryConfidence: number;
   language: 'th' | 'en' | 'mixed';
+  /** Only present when the multimodal schema asked for it (extractFromDocument) —
+   *  '' otherwise, which groundAndScore never receives since the OCR path
+   *  passes its own independent sourceText instead of this field. */
+  transcription: string;
 }
 
 function parseModelOutput(raw: string): RawModelOutput {
@@ -138,11 +237,12 @@ function parseModelOutput(raw: string): RawModelOutput {
         : [],
       summaryConfidence: typeof obj.summaryConfidence === 'number' ? obj.summaryConfidence : 0,
       language: obj.language ?? 'mixed',
+      transcription: obj.transcription ?? '',
     };
   } catch {
     // A model that fails to return valid JSON has effectively found
     // nothing we can trust — every field is null rather than guessed.
-    return { fields: {}, summary: '', summaryEvidence: [], summaryConfidence: 0, language: 'mixed' };
+    return { fields: {}, summary: '', summaryEvidence: [], summaryConfidence: 0, language: 'mixed', transcription: '' };
   }
 }
 
@@ -208,37 +308,53 @@ function clamp01(value: number): number {
   return Math.min(1, Math.max(0, value));
 }
 
-function buildPrompt(sourceText: string): string {
-  return [
+function buildPrompt(args: { multimodal: true } | { multimodal: false; sourceText: string }): string {
+  const lines: Array<string | null> = [
     `You are extracting structured fields from a Thai government procurement document ` +
       `(a Terms of Reference / TOR announcement). Prompt schema version: ${EXTRACTION_PROMPT_VERSION}.`,
     '',
     'Rules, all mandatory:',
-    '- Never invent a value that is not stated in the text. If a field is not present, return null for it.',
-    '- For every non-null field, quote the EXACT verbatim source text (in its original language) that supports it as "evidence". A value without matching evidence will be discarded.',
+    args.multimodal
+      ? '- First, transcribe the document\'s text as accurately and completely as you can into "transcription" — ' +
+        'plain text, original language, in reading order. This is the record of what you actually read.'
+      : null,
+    '- Never invent a value that is not stated in the document. If a field is not present, return null for it.',
+    args.multimodal
+      ? '- For every non-null field, quote the EXACT verbatim text (in its original language) that supports it ' +
+        'as "evidence" — and that quote MUST appear verbatim within your own "transcription" above. A value ' +
+        'without matching evidence will be discarded.'
+      : '- For every non-null field, quote the EXACT verbatim source text (in its original language) that supports it as "evidence". A value without matching evidence will be discarded.',
     '- Assign each field your own confidence in [0,1] reflecting how certain you are the value is correct and complete.',
     '- Normalise "budget" to a THB amount. If the source uses a Buddhist Era year anywhere relevant to a date field, convert it to the Gregorian calendar (subtract 543).',
     '- Report "language" for the document overall as "th", "en", or "mixed".',
     '- Write "summary" as a concise, standardised natural-language summary of the document. Never state a ' +
       'specific number, name, date, or amount in the summary unless it is stated in the text — if you cannot ' +
       'verify a detail, describe the document in more general terms instead of inventing the specific.',
-    '- For "summary", also supply "summaryEvidence": 2-5 EXACT verbatim quotes from the source text that ' +
-      'together support every specific claim in the summary. A summary whose claims are not backed by ' +
-      'matching quotes will be discarded entirely, so do not include a quote unless it genuinely appears in ' +
-      'the text above.',
+    args.multimodal
+      ? '- For "summary", also supply "summaryEvidence": 2-5 EXACT verbatim quotes, transcribed as plain text, ' +
+        'that together support every specific claim in the summary. A summary whose claims are not backed by ' +
+        'matching quotes will be discarded entirely, so do not include a quote unless it genuinely appears in ' +
+        'the document.'
+      : '- For "summary", also supply "summaryEvidence": 2-5 EXACT verbatim quotes from the source text that ' +
+        'together support every specific claim in the summary. A summary whose claims are not backed by ' +
+        'matching quotes will be discarded entirely, so do not include a quote unless it genuinely appears in ' +
+        'the text above.',
     '- Assign "summaryConfidence" in [0,1] the same way as a field\'s confidence, reflecting how certain you ' +
       'are the summary is both accurate and complete.',
     '',
-    'Document text:',
-    '"""',
-    sourceText,
-    '"""',
-  ].join('\n');
+    ...(args.multimodal
+      ? ['The document is attached below — read it directly (including tables and layout, not just running text).']
+      : ['Document text:', '"""', args.sourceText, '"""']),
+  ];
+  return lines.filter((line): line is string => line !== null).join('\n');
 }
 
 /** JSON schema for the model's structured response, built from the single
- *  field-key source of truth in core/fieldSchema.ts. */
-function buildResponseSchema(): Schema {
+ *  field-key source of truth in core/fieldSchema.ts. `multimodal` adds the
+ *  required "transcription" field extractFromDocument grounds evidence
+ *  against — the OCR-text path has no use for it, since it already has its
+ *  own independent source text. */
+function buildResponseSchema(opts: { multimodal?: boolean } = {}): Schema {
   const fieldSchema: Schema = {
     type: Type.OBJECT,
     properties: {
@@ -256,12 +372,20 @@ function buildResponseSchema(): Schema {
   return {
     type: Type.OBJECT,
     properties: {
+      ...(opts.multimodal ? { transcription: { type: Type.STRING } } : {}),
       fields: { type: Type.OBJECT, properties: fieldsProperties },
       summary: { type: Type.STRING },
       summaryEvidence: { type: Type.ARRAY, items: { type: Type.STRING } },
       summaryConfidence: { type: Type.NUMBER },
       language: { type: Type.STRING, enum: ['th', 'en', 'mixed'] },
     },
-    required: ['fields', 'summary', 'summaryEvidence', 'summaryConfidence', 'language'],
+    required: [
+      ...(opts.multimodal ? ['transcription'] : []),
+      'fields',
+      'summary',
+      'summaryEvidence',
+      'summaryConfidence',
+      'language',
+    ],
   };
 }
