@@ -34,4 +34,13 @@ describe('decideRouting (BR-03 / TBD-01)', () => {
   it('treats a score exactly at both thresholds as clearing them (inclusive bounds)', () => {
     assert.equal(decideRouting(0.92, { ...baseCfg, autoPublishEnabled: true }), 'published');
   });
+
+  it('isAwarded: true blocks auto-publish even at a perfect score', () => {
+    assert.equal(decideRouting(1, { ...baseCfg, autoPublishEnabled: true }, true), 'pending_review');
+  });
+
+  it('isAwarded: false or null does not block an otherwise-publishable record', () => {
+    assert.equal(decideRouting(0.95, { ...baseCfg, autoPublishEnabled: true }, false), 'published');
+    assert.equal(decideRouting(0.95, { ...baseCfg, autoPublishEnabled: true }, null), 'published');
+  });
 });

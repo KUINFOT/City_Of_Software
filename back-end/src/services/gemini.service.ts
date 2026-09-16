@@ -378,6 +378,10 @@ function buildPrompt(args: { multimodal: true } | { multimodal: false; sourceTex
         'as "evidence" — and that quote MUST appear verbatim within your own "transcription" above. A value ' +
         'without matching evidence will be discarded.'
       : '- For every non-null field, quote the EXACT verbatim source text (in its original language) that supports it as "evidence". A value without matching evidence will be discarded.',
+    '- Every field\'s "value" itself must ALSO stay in the document\'s own dominant language, the same as its ' +
+      '"evidence" already must — never translate a value into English while the document is written in Thai. ' +
+      '(Exceptions: "budget" is numeric, and "estimatedComplexity"/"procurementMethod" use the fixed English ' +
+      'labels this schema defines for them.)',
     '- Exception: "estimatedComplexity" (low/medium/high) is YOUR judgment based on the project\'s described ' +
       'scope, not a fact the document states outright — no real document literally says "this is medium ' +
       'complexity". Give your best judgment and a confidence for it; it is not discarded for lacking a matching ' +

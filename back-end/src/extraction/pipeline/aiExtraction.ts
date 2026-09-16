@@ -30,6 +30,8 @@ import { asComplexity, asDate, asNumber, asString, asStringArray } from '../core
 import { decideRouting, type RoutingDecision } from '../core/reviewRouting';
 import { computeOverallConfidence } from '../core/confidenceScoring';
 import { parseThaiDate } from '../core/thaiDate';
+import { classify } from '../core/awardStatus';
+import type { AwardStage, StageVerdict } from '../types';
 import { extractionConfig } from '../core/config';
 import { gcpConfig } from '../../config/gcpConfig';
 import { createLogger, type Logger } from '../core/logger';
@@ -209,10 +211,18 @@ async function processDocument(document: DocumentLike, store: BlobStore, logger:
   }
   const processingTimeMs = Date.now() - started;
 
+  // Cross-check the scrape-time title-keyword stage against what the AI
+  // actually read — see StageSignal's `ai_content` doc comment (types.ts)
+  // for the live case (two ITD listings both titled generically, whose real
+  // attached documents were post-award winner disclosures) this exists to
+  // catch. Only ever escalates toward awarded/cancelled, never reverses an
+  // existing verdict — see rollUpForTor.
+  const contentVerdict = classify(extractedText, 'ai_content');
+
   // A TOR's documents are swept independently, often minutes or days apart,
   // so routing has to reflect what the TOR knows ACROSS all of them — not
   // just whatever this one document happened to find. See rollUpForTor.
-  const rollup = await rollUpForTor(document.torId, structured);
+  const rollup = await rollUpForTor(document.torId, structured, contentVerdict);
 
   const job = await ExtractionJobModel.create({
     documentId: document._id,
@@ -308,6 +318,13 @@ export interface TorRollup {
    *  against a TOR with no summary yet, so a bad summary simply leaves the
    *  Tor without one rather than publishing a hallucination. */
   summaryWins: boolean;
+  /** Set only when the AI's own read of the document content found an
+   *  award/cancellation the scrape-time title-keyword stage missed — see
+   *  StageSignal's `ai_content` doc comment (types.ts). `null` when there's
+   *  nothing to correct (the existing stage already agrees, or the content
+   *  verdict found no award signal at all). applyExtractionToTor writes
+   *  these fields onto the Tor's `lifecycle` when present. */
+  lifecycleOverride: { stage: AwardStage; stageLabel: string; isAwarded: boolean; signal: 'ai_content' } | null;
 }
 
 /**
@@ -323,9 +340,13 @@ export interface TorRollup {
  * together cover the full field set is judged on that combined picture, not
  * on whichever single document the sweep happened to process most recently.
  */
-async function rollUpForTor(torId: Types.ObjectId, structured: StructuredExtractionResult): Promise<TorRollup> {
+async function rollUpForTor(
+  torId: Types.ObjectId,
+  structured: StructuredExtractionResult,
+  contentVerdict: StageVerdict
+): Promise<TorRollup> {
   const tor = await TorModel.findById(torId)
-    .select('extraction.humanCorrectedFields extraction.fieldConfidence summaryAi.confidence')
+    .select('extraction.humanCorrectedFields extraction.fieldConfidence summaryAi.confidence lifecycle.isAwarded')
     .lean();
 
   const correctedFields = new Set<string>(tor?.extraction?.humanCorrectedFields ?? []);
@@ -341,12 +362,32 @@ async function rollUpForTor(torId: Types.ObjectId, structured: StructuredExtract
   const priorSummaryConfidence = tor?.summaryAi?.confidence ?? 0;
   const summaryWins = structured.summaryConfidence > 0 && structured.summaryConfidence >= priorSummaryConfidence;
 
+  // Escalate-only: a content verdict of awarded/cancelled overrides a stage
+  // that doesn't already say so; anything else about the content verdict
+  // (a pre-award stage, or 'other') never overwrites what the scrape-time
+  // title already established, since a title correctly reading "ผู้ชนะ" is
+  // already reliable and the AI's read of a long document is noisier than a
+  // keyword match on its own short title.
+  const currentIsAwarded = tor?.lifecycle?.isAwarded ?? null;
+  const contentFoundAward = contentVerdict.stage === 'awarded' || contentVerdict.stage === 'cancelled';
+  const lifecycleOverride =
+    contentFoundAward && currentIsAwarded !== true
+      ? {
+          stage: contentVerdict.stage,
+          stageLabel: contentVerdict.stageLabel,
+          isAwarded: contentVerdict.isAwarded ?? true,
+          signal: 'ai_content' as const,
+        }
+      : null;
+  const effectiveIsAwarded = lifecycleOverride?.isAwarded ?? currentIsAwarded;
+
   return {
     fieldConfidence,
     overallConfidence,
-    routing: decideRouting(overallConfidence, extractionConfig),
+    routing: decideRouting(overallConfidence, extractionConfig, effectiveIsAwarded),
     correctedFields,
     summaryWins,
+    lifecycleOverride,
   };
 }
 
@@ -419,6 +460,13 @@ async function applyExtractionToTor(
     'extraction.lastProcessedAt': new Date(),
     'extraction.lastDocumentId': documentId,
   };
+
+  if (rollup.lifecycleOverride) {
+    set['lifecycle.stage'] = rollup.lifecycleOverride.stage;
+    set['lifecycle.stageLabel'] = rollup.lifecycleOverride.stageLabel;
+    set['lifecycle.isAwarded'] = rollup.lifecycleOverride.isAwarded;
+    set['lifecycle.signal'] = rollup.lifecycleOverride.signal;
+  }
 
   // Written only when this document's summary actually grounded (see
   // gemini.service.ts's groundAndScore) AND ties-or-beats whatever summary

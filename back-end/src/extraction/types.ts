@@ -31,8 +31,21 @@ export type AwardStage =
  * Stored on every TOR so a downstream consumer can weight the record. A
  * `title_keyword` verdict on a direct-appointment (วิธีเฉพาะเจาะจง) notice is
  * a guess; an `authoritative` verdict from eGP BMA2 is a fact.
+ *
+ * `ai_content` — a keyword match against the AI's own read of the actual
+ * attached document (its transcription or OCR text), not the scraped
+ * listing title. Added after a live case (2026-09-16) where two ITD
+ * listings both carried the same generic "ขอบเขตของงาน..." title
+ * regardless of what the attached document actually was, so `title_keyword`
+ * classified both as `draft_tor` while the real documents were post-award
+ * winner disclosures. Content beats a title that doesn't reliably describe
+ * what's attached, so `applyExtractionToTor` lets this signal upgrade the
+ * stage to `awarded`/`cancelled` when the title-based verdict missed it —
+ * never the reverse, since a title correctly reading "ผู้ชนะ" is already
+ * reliable and the AI's read of a long document is noisier than a keyword
+ * match on its own short title.
  */
-export type StageSignal = 'authoritative' | 'doc_type' | 'title_keyword';
+export type StageSignal = 'authoritative' | 'doc_type' | 'title_keyword' | 'ai_content';
 
 export interface StageVerdict {
   stage: AwardStage;
