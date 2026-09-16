@@ -227,7 +227,7 @@ export function parseThaiDateRange(
 }
 
 /** Strip the time-of-day so window comparisons are date-only, in UTC. */
-function startOfUtcDay(date: Date): number {
+export function startOfUtcDay(date: Date): number {
   return Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate());
 }
 

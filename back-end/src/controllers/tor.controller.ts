@@ -9,6 +9,7 @@ import { computeKeyDates } from '../analytics/keyDates';
 import { matchQualifications } from '../matching/qualificationMatch';
 import { computeMatchReasons } from '../matching/matchReasons';
 import { createDocumentAccessToken } from '../services/documentAccess.service';
+import { startOfUtcDay } from '../extraction/core/thaiDate';
 import type { AuthenticatedRequest } from '../middleware/auth.middleware';
 
 /**
@@ -33,10 +34,18 @@ import type { AuthenticatedRequest } from '../middleware/auth.middleware';
  * for "now" without another scheduled job to keep in sync. A TOR whose
  * deadline was never successfully extracted (`submissionDeadline` absent) is
  * kept rather than guessed closed — "absent stays absent" applies here too.
+ *
+ * The cutoff is the START of today (UTC), not the exact current moment —
+ * `core/thaiDate.ts`'s deterministic date parsing stores every date at
+ * midnight UTC (no time-of-day), so comparing against `new Date()` made a
+ * deadline of "today" read as already past the instant any time elapsed
+ * since midnight, hiding a TOR a vendor could very much still act on. A
+ * date-only field needs a date-only cutoff.
  */
 export async function listTors(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const limit = Math.min(toPositiveInt(req.query.limit) ?? 50, 200);
+    const todayStart = new Date(startOfUtcDay(new Date()));
     // BR-03 enforced again here, not just at approve-time: a bug elsewhere
     // that leaves a record in the wrong status must never leak through the
     // one public read path.
@@ -45,7 +54,7 @@ export async function listTors(req: Request, res: Response, next: NextFunction):
       $or: [
         { 'timeline.submissionDeadline': { $exists: false } },
         { 'timeline.submissionDeadline': null },
-        { 'timeline.submissionDeadline': { $gte: new Date() } },
+        { 'timeline.submissionDeadline': { $gte: todayStart } },
       ],
     })
       .select('title agencyName budget.amountThb timeline.submissionDeadline lifecycle.stage createdAt')
