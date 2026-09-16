@@ -14,7 +14,7 @@ export const REGISTRATION_DRAFT_KEY = "city-of-software-registration-draft";
 export const VENDOR_PROFILE_DRAFT_KEY = "city-of-software-vendor-profile-draft";
 
 export const blankRegistrationDraft: RegistrationDraft = { name: "", organization: "", email: "", password: "", phone: "", role: "vendor", accepted: true };
-export const blankVendorProfile: VendorProfile = { organizationType: "company", companyName: "", techStack: [], serviceCategories: [], certifications: [] };
+export const blankVendorProfile: VendorProfile = { organizationType: "company", companyName: "", techStack: [], serviceCategories: [], certifications: [], pastContracts: [] };
 
 function readDraft<T>(key: string, fallback: T): T {
   if (typeof window === "undefined") return fallback;
