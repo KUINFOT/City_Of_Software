@@ -66,9 +66,28 @@ export async function runExtractionSweep(
 
   result.doclessRouted = await routeDoclessTors(logger);
 
+  // EXTRACTION_MAX_DOCUMENTS: a temporary dev-environment hard ceiling (see
+  // core/config.ts) — 0 means no limit. Independent of the crawler's own
+  // cap in pipeline/attachments.ts: this one bounds the SWEEP specifically,
+  // so a backlog that already existed before the cap was set (or one that
+  // built up from a source outside this app's control) still can't make an
+  // unbounded number of AI-extraction calls.
+  let effectiveBatchSize = batchSize;
+  if (extractionConfig.maxDocuments > 0) {
+    const alreadyProcessed = await DocumentModel.countDocuments({ status: { $ne: 'uploaded' } });
+    const budgetRemaining = Math.max(0, extractionConfig.maxDocuments - alreadyProcessed);
+    if (budgetRemaining === 0) {
+      logger.warn(
+        `extraction sweep skipped — EXTRACTION_MAX_DOCUMENTS=${extractionConfig.maxDocuments} already reached ` +
+          `(${alreadyProcessed} documents already processed)`
+      );
+    }
+    effectiveBatchSize = Math.min(batchSize, budgetRemaining);
+  }
+
   const documents = await DocumentModel.find({ status: 'uploaded' })
     .sort({ createdAt: 1 })
-    .limit(batchSize);
+    .limit(effectiveBatchSize);
 
   for (const document of documents) {
     if ((document.extraction?.attempts ?? 0) >= extractionConfig.maxAttempts) {

@@ -83,6 +83,19 @@ export const extractionConfig = {
   maxAttempts: num('EXTRACTION_MAX_ATTEMPTS', 3),
   /** Documents processed per extraction-sweep run — bounds run time and cost. */
   sweepBatchSize: num('EXTRACTION_SWEEP_BATCH_SIZE', 20),
+  /**
+   * Hard ceiling on total Document rows the system will ever store or
+   * process — a temporary dev-environment rail (added 2026-09-16, not meant
+   * to ship to production like this), since both the crawler and the AI
+   * sweep can otherwise run unattended into the hundreds of documents at
+   * real API cost. 0 (the default) means no limit. Enforced in two places
+   * that both need it independently: pipeline/attachments.ts (stop storing
+   * NEW documents once the collection hits this) and pipeline/aiExtraction.ts
+   * (stop the sweep pulling more out of the queue once this many have ever
+   * been attempted) — a cap on intake alone wouldn't bound a sweep working
+   * through a backlog that predates the cap, and vice versa.
+   */
+  maxDocuments: numAllowZero('EXTRACTION_MAX_DOCUMENTS', 0),
   /** Grace period before a TOR with zero attachments is routed to review anyway. */
   doclessGraceHours: numAllowZero('EXTRACTION_DOCLESS_GRACE_HOURS', 24),
   /** Rough per-document AI cost estimate in THB (FR-EXT-10/NFR-PER-06) — a
