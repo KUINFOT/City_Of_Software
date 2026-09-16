@@ -28,6 +28,7 @@ import {
 } from '../core/fieldSchema';
 import { asComplexity, asDate, asNumber, asString, asStringArray } from '../core/fieldCoercion';
 import { decideRouting, type RoutingDecision } from '../core/reviewRouting';
+import { computeOverallConfidence } from '../core/confidenceScoring';
 import { extractionConfig } from '../core/config';
 import { gcpConfig } from '../../config/gcpConfig';
 import { createLogger, type Logger } from '../core/logger';
@@ -334,9 +335,7 @@ async function rollUpForTor(torId: Types.ObjectId, structured: StructuredExtract
     fieldConfidence.set(key, Math.max(mapGet(priorFieldConfidence, key), structured.fields[key].confidence));
   }
 
-  const kept = [...fieldConfidence.values()].filter((c) => c > 0);
-  const overallConfidence =
-    kept.length === 0 ? 0 : (kept.reduce((a, b) => a + b, 0) / kept.length) * (kept.length / EXTRACTED_FIELD_KEYS.length);
+  const overallConfidence = computeOverallConfidence((key) => fieldConfidence.get(key)!, EXTRACTED_FIELD_KEYS);
 
   const priorSummaryConfidence = tor?.summaryAi?.confidence ?? 0;
   const summaryWins = structured.summaryConfidence > 0 && structured.summaryConfidence >= priorSummaryConfidence;
@@ -426,8 +425,8 @@ async function applyExtractionToTor(
     set,
     writable,
     'qualificationRequirements',
-    'qualifications.rawText',
-    asString(value('qualificationRequirements'))
+    'qualifications.items',
+    asStringArray(value('qualificationRequirements'))
   );
   // evaluationCriteria's real shape is a structured array ({criterion,
   // weightPercent}); the model's flat-string schema can only responsibly
@@ -493,6 +492,17 @@ async function recordFailure(
     }
   );
   if (!torId) return; // ExtractionJob.torId is required — nothing to link a job to.
+
+  // processDocument flips the Tor to 'extracting' before attempting the AI
+  // call, so a failure this far in leaves it stuck there forever (nothing
+  // else ever moves a Tor OUT of 'extracting') unless reverted here — it
+  // would silently vanish from every queue: not 'discovered' (so the sweep
+  // won't pick it up again on its own), not 'pending_review' (so it's not in
+  // the review queue either). Guarded on still being 'extracting' so this
+  // never clobbers a status a concurrent, successful document already moved
+  // past.
+  await TorModel.updateOne({ _id: torId, status: 'extracting' }, { $set: { status: 'discovered' } });
+
   await ExtractionJobModel.create({
     documentId,
     torId,

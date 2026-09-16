@@ -1,16 +1,26 @@
-import { describe, it } from 'node:test';
+import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 
+import { gcpConfig } from '../config/gcpConfig';
 import { extractText } from './documentAI.service';
 
-// These tests exercise the dev-mode fallback branch, which is also this
-// repo's actual current state: GCP_PROJECT_ID is unset in .env, so
-// gcpConfig.projectId === '' for every run of this suite, matching the
-// condition documentAI.service.ts checks. If a future environment sets real
-// GCP credentials before running tests, these assertions would need a
-// dedicated dev-mode override — not attempted here, since there is nothing
-// in this repo to test the real GCP path against anyway.
+// These tests exercise the dev-mode fallback branch. This repo's .env now
+// carries real GCP credentials (wired up once the pipeline moved past dev-
+// mode), so gcpConfig.projectId is forced back to '' for this suite's
+// duration and restored after — the "dedicated dev-mode override" this
+// comment used to say wasn't needed yet. `gcpConfig` is a plain object (its
+// `as const` typing is compile-time only), so mutating this shared
+// instance's property is enough to change what documentAI.service.ts itself
+// sees.
 describe('documentAI.service — dev-mode fallback (no GCP credentials)', () => {
+  const realProjectId = gcpConfig.projectId;
+  before(() => {
+    (gcpConfig as { projectId: string }).projectId = '';
+  });
+  after(() => {
+    (gcpConfig as { projectId: string }).projectId = realProjectId;
+  });
+
   it('returns zero confidence, never a guessed value', async () => {
     const result = await extractText(Buffer.from('hello'), 'application/pdf');
     assert.equal(result.confidence, 0);

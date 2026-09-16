@@ -16,12 +16,12 @@ const FIELD_CONFIG: Array<{ key: string; label: string; kind: FieldKind; scrapeD
   { key: "referenceNumber", label: "เลขที่อ้างอิง", kind: "text" },
   { key: "procurementMethod", label: "วิธีการจัดซื้อจัดจ้าง", kind: "procurementMethod" },
   { key: "description", label: "รายละเอียดโครงการ", kind: "textarea" },
-  { key: "requiredTechnologies", label: "เทคโนโลยีที่ต้องการ (คั่นด้วยจุลภาค)", kind: "list" },
-  { key: "deliverables", label: "สิ่งที่ต้องส่งมอบ (คั่นด้วยจุลภาค)", kind: "list" },
-  { key: "keyRisks", label: "ความเสี่ยงสำคัญ (คั่นด้วยจุลภาค)", kind: "list" },
+  { key: "requiredTechnologies", label: "เทคโนโลยีที่ต้องการ", kind: "list" },
+  { key: "deliverables", label: "สิ่งที่ต้องส่งมอบ", kind: "list" },
+  { key: "keyRisks", label: "ความเสี่ยงสำคัญ", kind: "list" },
   { key: "estimatedComplexity", label: "ระดับความซับซ้อน", kind: "complexity" },
   { key: "budget", label: "งบประมาณ (บาท)", kind: "number" },
-  { key: "qualificationRequirements", label: "คุณสมบัติผู้เสนอราคา", kind: "textarea" },
+  { key: "qualificationRequirements", label: "คุณสมบัติผู้เสนอราคา", kind: "list" },
   { key: "evaluationCriteria", label: "เกณฑ์การพิจารณา", kind: "textarea" },
   { key: "timelineAnnouncement", label: "วันประกาศ", kind: "date" },
   { key: "timelineCommentClose", label: "วันสิ้นสุดรับฟังความคิดเห็น", kind: "date" },
@@ -45,6 +45,63 @@ const COMPLEXITY_OPTIONS = [
   { value: "high", label: "สูง" },
 ];
 
+/**
+ * Renders a `\n`-joined string of items as removable tag chips plus an input
+ * for adding more — the value stays a single newline-joined string (Enter or
+ * comma commits a chip) so it round-trips through the same string-keyed
+ * `values` state and `coerceFieldValue`'s array-splitting as every other
+ * field, without a separate array-shaped state path just for this kind.
+ */
+function TagListEditor({ value, onChange }: { value: string; onChange: (next: string) => void }) {
+  const tags = value.split("\n").map((t) => t.trim()).filter(Boolean);
+  const [draft, setDraft] = useState("");
+
+  function commitDraft() {
+    const trimmed = draft.trim();
+    if (!trimmed) return;
+    onChange([...tags, trimmed].join("\n"));
+    setDraft("");
+  }
+
+  function removeTag(index: number) {
+    onChange(tags.filter((_, i) => i !== index).join("\n"));
+  }
+
+  return (
+    <div className="tag-list-editor">
+      {tags.length > 0 && (
+        <div className="tag-list-editor__tags">
+          {tags.map((tag, index) => (
+            <span className="tag-chip" key={`${tag}-${index}`}>
+              {tag}
+              <button type="button" onClick={() => removeTag(index)} aria-label={`ลบ ${tag}`}>×</button>
+            </span>
+          ))}
+        </div>
+      )}
+      <input
+        type="text"
+        value={draft}
+        placeholder="พิมพ์แล้วกด Enter เพื่อเพิ่มรายการ"
+        onChange={(event) => setDraft(event.target.value)}
+        onKeyDown={(event) => {
+          // `.key` is the normal check, but some input paths (IME
+          // composition, certain automation/assistive-tech tools) report
+          // "Unidentified" for a real Enter press — `.keyCode` is a
+          // reliable fallback for that one case since it's still 13 there.
+          if (event.key === "Enter" || event.key === "," || event.keyCode === 13) {
+            event.preventDefault();
+            commitDraft();
+          } else if (event.key === "Backspace" && draft === "" && tags.length > 0) {
+            removeTag(tags.length - 1);
+          }
+        }}
+        onBlur={commitDraft}
+      />
+    </div>
+  );
+}
+
 function toDateInputValue(value: string | null | undefined): string {
   if (!value) return "";
   const parsed = new Date(value);
@@ -58,12 +115,12 @@ function currentValue(record: ReviewRecord, key: string): string {
     case "referenceNumber": return record.referenceNumber ?? "";
     case "procurementMethod": return record.procurementMethod ?? "";
     case "description": return record.description ?? "";
-    case "requiredTechnologies": return (record.technologies ?? []).join(", ");
-    case "deliverables": return (record.deliverables ?? []).join(", ");
-    case "keyRisks": return (record.keyRisks ?? []).join(", ");
+    case "requiredTechnologies": return (record.technologies ?? []).join("\n");
+    case "deliverables": return (record.deliverables ?? []).join("\n");
+    case "keyRisks": return (record.keyRisks ?? []).join("\n");
     case "estimatedComplexity": return record.estimatedComplexity ?? "";
     case "budget": return record.budget?.amountThb != null ? String(record.budget.amountThb) : "";
-    case "qualificationRequirements": return record.qualifications?.rawText ?? "";
+    case "qualificationRequirements": return (record.qualifications?.items ?? []).join("\n");
     case "evaluationCriteria": return (record.evaluationCriteria ?? []).map((c) => c.criterion).join("; ");
     case "timelineAnnouncement": return toDateInputValue(record.timeline?.announcementDate);
     case "timelineCommentClose": return toDateInputValue(record.timeline?.commentPeriodEnd);
@@ -272,6 +329,8 @@ export default function ReviewRecordPage() {
                     </div>
                     {field.kind === "textarea" ? (
                       <textarea rows={3} value={values[field.key] ?? ""} onChange={(event) => setValue(field.key, event.target.value)} />
+                    ) : field.kind === "list" ? (
+                      <TagListEditor value={values[field.key] ?? ""} onChange={(next) => setValue(field.key, next)} />
                     ) : field.kind === "date" ? (
                       <input type="date" value={values[field.key] ?? ""} onChange={(event) => setValue(field.key, event.target.value)} />
                     ) : field.kind === "number" ? (

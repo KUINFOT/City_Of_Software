@@ -104,7 +104,7 @@ One document per procurement notice (TOR).
     min_contract_value_thb: Number,   // e.g. 1,500,000 threshold from the proposal
     required_certifications: [String],
     required_experience_years: Number,
-    raw_text: String                  // original extracted qualification text
+    items: [String]                   // one entry per distinct requirement, not one paraphrased paragraph
   },
 
   evaluation_criteria: [

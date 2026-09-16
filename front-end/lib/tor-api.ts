@@ -21,7 +21,7 @@ export type TorQualifications = {
   minContractValueThb?: number | null;
   requiredCertifications?: string[] | null;
   requiredExperienceYears?: number | null;
-  rawText?: string | null;
+  items?: string[] | null;
 } | null;
 
 export type TorSource = {

@@ -22,7 +22,7 @@ export type ReviewRecord = {
   keyRisks?: string[];
   estimatedComplexity?: "low" | "medium" | "high" | null;
   budget?: { amountThb: number | null } | null;
-  qualifications?: { rawText?: string | null } | null;
+  qualifications?: { items?: string[] | null } | null;
   evaluationCriteria?: Array<{ criterion: string; weightPercent?: number }>;
   timeline?: Record<string, string | null | undefined>;
   documentIds: string[];

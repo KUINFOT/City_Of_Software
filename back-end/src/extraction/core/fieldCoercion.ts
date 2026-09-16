@@ -65,7 +65,6 @@ const STRING_FIELDS: ReadonlySet<ExtractedFieldKey> = new Set([
   'referenceNumber',
   'procurementMethod',
   'description',
-  'qualificationRequirements',
   // The Tor's real shape is a structured array ({criterion, weightPercent}) —
   // both write paths can only responsibly accept the raw text (see
   // aiExtraction.ts's applyExtractionToTor), so this stays a plain string
@@ -76,6 +75,9 @@ const ARRAY_FIELDS: ReadonlySet<ExtractedFieldKey> = new Set([
   'requiredTechnologies',
   'deliverables',
   'keyRisks',
+  // One item per distinct bidder-qualification requirement, not one
+  // paraphrased paragraph — see gemini.service.ts's prompt instruction.
+  'qualificationRequirements',
 ]);
 const DATE_FIELDS: ReadonlySet<ExtractedFieldKey> = new Set([
   'timelineCommentClose',

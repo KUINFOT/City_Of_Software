@@ -34,6 +34,33 @@ export const EXTRACTED_FIELD_KEYS = [
 export type ExtractedFieldKey = (typeof EXTRACTED_FIELD_KEYS)[number];
 
 /**
+ * Fields nearly every real procurement document establishes regardless of
+ * type or method — what's being procured, who's procuring it, how, roughly
+ * how much, and when bids are due. This is the coverage denominator
+ * `core/confidenceScoring.ts`'s `computeOverallConfidence` uses instead of
+ * every `EXTRACTED_FIELD_KEYS` entry.
+ *
+ * The other ten fields are legitimately absent from a large share of real
+ * documents — not a sign of bad extraction, just normal variation by
+ * procurement type — and scoring coverage against all sixteen punished that
+ * as if it were a failure. Live-audited 2026-09-16 across every TOR
+ * processed that day: `evaluationCriteria` alone was "not found" 94% of the
+ * time, `keyRisks` 100% of the time, yet the documents that were missing
+ * them were read correctly — those sections just weren't in them. A field
+ * outside this list still contributes to the confidence AVERAGE when the
+ * model does find and ground it; it just no longer costs anything in the
+ * coverage term when it's genuinely not there.
+ */
+export const CORE_FIELD_KEYS = [
+  'title',
+  'agency',
+  'procurementMethod',
+  'description',
+  'budget',
+  'timelineSubmissionDeadline',
+] as const satisfies readonly ExtractedFieldKey[];
+
+/**
  * Bump on any change to the prompt, model choice, or the key list above.
  * Semantic-ish versioning is a convention here, not an enforced contract.
  */
@@ -105,7 +132,7 @@ export const FIELD_TO_TOR_PATH: Record<ExtractedFieldKey, string> = {
   timelineClarificationMeeting: 'timeline.clarificationMeetingDate',
   timelineSubmissionDeadline: 'timeline.submissionDeadline',
   timelineAnnouncement: 'timeline.announcementDate',
-  qualificationRequirements: 'qualifications.rawText',
+  qualificationRequirements: 'qualifications.items',
   evaluationCriteria: 'evaluationCriteria',
   budget: 'budget.amountThb',
   keyRisks: 'keyRisks',

@@ -1,6 +1,7 @@
 import { GoogleGenAI, Type, type Schema } from '@google/genai';
 import { gcpConfig } from '../config/gcpConfig';
 import { verifyGrounding } from '../extraction/core/grounding';
+import { computeOverallConfidence } from '../extraction/core/confidenceScoring';
 import {
   EXTRACTED_FIELD_KEYS,
   EXTRACTION_PROMPT_VERSION,
@@ -83,6 +84,18 @@ const MAX_INLINE_DOCUMENT_BYTES = 14 * 1024 * 1024;
 
 const MULTIMODAL_MIME_TYPES = new Set(['application/pdf', 'image/jpeg', 'image/png', 'image/tiff']);
 
+/**
+ * Gemini 2.5 Flash's own ceiling (not raised further — this is the model's
+ * actual limit, not a policy knob). Left unset, the SDK's implicit default
+ * sits uncomfortably close to what a long multi-page Thai document's
+ * transcription-plus-grounded-fields response actually needs: live-tested at
+ * ~37,500 output tokens for a 44-page TOR, confirmed by replaying that exact
+ * call (2026-09-16). Riding near an undocumented default risks the response
+ * getting cut off mid-JSON on longer documents — see ModelOutputParseError's
+ * comment for what that looks like when it happens.
+ */
+const MAX_OUTPUT_TOKENS = 65536;
+
 export function canReadDirectly(document: RawDocumentInput): boolean {
   return MULTIMODAL_MIME_TYPES.has(document.mimeType) && document.buffer.length <= MAX_INLINE_DOCUMENT_BYTES;
 }
@@ -130,6 +143,7 @@ export async function extractStructuredFields(
     config: {
       responseMimeType: 'application/json',
       responseSchema: buildResponseSchema(),
+      maxOutputTokens: MAX_OUTPUT_TOKENS,
     },
   });
 
@@ -197,6 +211,7 @@ export async function extractFromDocument(
     config: {
       responseMimeType: 'application/json',
       responseSchema: buildResponseSchema({ multimodal: true }),
+      maxOutputTokens: MAX_OUTPUT_TOKENS,
     },
   });
 
@@ -226,31 +241,70 @@ interface RawModelOutput {
   transcription: string;
 }
 
-function parseModelOutput(raw: string): RawModelOutput {
-  try {
-    const obj = JSON.parse(raw) as Partial<RawModelOutput>;
-    return {
-      fields: obj.fields ?? {},
-      summary: obj.summary ?? '',
-      summaryEvidence: Array.isArray(obj.summaryEvidence)
-        ? obj.summaryEvidence.filter((quote): quote is string => typeof quote === 'string')
-        : [],
-      summaryConfidence: typeof obj.summaryConfidence === 'number' ? obj.summaryConfidence : 0,
-      language: obj.language ?? 'mixed',
-      transcription: obj.transcription ?? '',
-    };
-  } catch {
-    // A model that fails to return valid JSON has effectively found
-    // nothing we can trust — every field is null rather than guessed.
-    return { fields: {}, summary: '', summaryEvidence: [], summaryConfidence: 0, language: 'mixed', transcription: '' };
+/**
+ * Thrown when Gemini's response wasn't valid JSON — almost always a long
+ * document's response getting cut off or malformed mid-generation (live-
+ * confirmed 2026-09-16: 2 of 19 documents in one sweep, both 44+ pages, came
+ * back this way). Deliberately a real thrown error, not a silent empty
+ * result: this used to be swallowed into an all-null, zero-confidence
+ * `StructuredExtractionResult` that looked exactly like a legitimate "found
+ * nothing" extraction, which meant a transient parse failure permanently
+ * poisoned the TOR (no field would ever again look "worse" than 0, so a
+ * later good document's values could never lose to it, but the document
+ * itself was marked 'extracted' and never retried). Throwing routes this
+ * through aiExtraction.ts's normal per-document catch block instead, which
+ * calls recordFailure and lets EXTRACTION_MAX_ATTEMPTS retry it like any
+ * other transient failure.
+ */
+export class ModelOutputParseError extends Error {
+  constructor(cause: unknown) {
+    super(`Gemini response was not valid JSON: ${cause instanceof Error ? cause.message : String(cause)}`);
+    this.name = 'ModelOutputParseError';
   }
 }
+
+function parseModelOutput(raw: string): RawModelOutput {
+  let obj: Partial<RawModelOutput>;
+  try {
+    obj = JSON.parse(raw) as Partial<RawModelOutput>;
+  } catch (err) {
+    throw new ModelOutputParseError(err);
+  }
+  return {
+    fields: obj.fields ?? {},
+    summary: obj.summary ?? '',
+    summaryEvidence: Array.isArray(obj.summaryEvidence)
+      ? obj.summaryEvidence.filter((quote): quote is string => typeof quote === 'string')
+      : [],
+    summaryConfidence: typeof obj.summaryConfidence === 'number' ? obj.summaryConfidence : 0,
+    language: obj.language ?? 'mixed',
+    transcription: obj.transcription ?? '',
+  };
+}
+
+/**
+ * FR-EXT-09's verbatim-evidence grounding makes sense for a FACT a document
+ * states (a budget figure, a deadline, a name) — but "estimatedComplexity"
+ * isn't a fact the document states, it's a judgment the model forms FROM the
+ * document (no real TOR ever contains a sentence saying "this project is
+ * medium complexity" for the model to quote). Holding it to the same
+ * verbatim-quote standard as every fact-field made it structurally
+ * ungroundable: live-audited 2026-09-16, it sat at exactly 0% confidence
+ * across every TOR ever processed — not "usually low," literally never once
+ * grounded — which permanently cost every single record 1/16 of its
+ * coverage score for a field that could never have passed in the first
+ * place, regardless of extraction quality. Exempted here rather than
+ * requiring evidence: the model's own confidence is trusted directly
+ * (still clamped to [0,1]), the same way `overallConfidence` and the
+ * publish/review routing decision are already model/system judgments rather
+ * than grounded facts.
+ */
+const UNGROUNDABLE_JUDGMENT_FIELDS: ReadonlySet<ExtractedFieldKey> = new Set(['estimatedComplexity']);
 
 /** Applies the FR-EXT-09 grounding check and recomputes overall confidence. */
 function groundAndScore(sourceText: string, raw: RawModelOutput): StructuredExtractionResult {
   const fields = {} as Record<ExtractedFieldKey, FieldExtraction>;
   const discardedFields: string[] = [];
-  const keptConfidences: number[] = [];
 
   for (const key of EXTRACTED_FIELD_KEYS) {
     const candidate = raw.fields[key];
@@ -259,7 +313,7 @@ function groundAndScore(sourceText: string, raw: RawModelOutput): StructuredExtr
       continue;
     }
 
-    if (!verifyGrounding(sourceText, candidate.evidence)) {
+    if (!UNGROUNDABLE_JUDGMENT_FIELDS.has(key) && !verifyGrounding(sourceText, candidate.evidence)) {
       discardedFields.push(key);
       fields[key] = { value: null, confidence: 0, evidence: null };
       continue;
@@ -267,14 +321,9 @@ function groundAndScore(sourceText: string, raw: RawModelOutput): StructuredExtr
 
     const confidence = clamp01(candidate.confidence);
     fields[key] = { value: candidate.value, confidence, evidence: candidate.evidence };
-    keptConfidences.push(confidence);
   }
 
-  const overallConfidence =
-    keptConfidences.length === 0
-      ? 0
-      : (keptConfidences.reduce((a, b) => a + b, 0) / keptConfidences.length) *
-        (keptConfidences.length / EXTRACTED_FIELD_KEYS.length);
+  const overallConfidence = computeOverallConfidence((key) => fields[key].confidence, EXTRACTED_FIELD_KEYS);
 
   // FR-EXT-09 applies to the free-text summary exactly as it does to every
   // structured field above — a claim not traceable to the source text is
@@ -319,11 +368,21 @@ function buildPrompt(args: { multimodal: true } | { multimodal: false; sourceTex
         'plain text, original language, in reading order. This is the record of what you actually read.'
       : null,
     '- Never invent a value that is not stated in the document. If a field is not present, return null for it.',
+    '- "requiredTechnologies", "deliverables", "keyRisks", and "qualificationRequirements" each hold MULTIPLE ' +
+      'distinct items, not one paraphrased sentence — put each separate item on its own line within that ' +
+      'field\'s value. For "qualificationRequirements" specifically, mirror the document\'s own itemization ' +
+      '(e.g. numbered clauses like 3.1, 3.2, 3.3) one requirement per line, in the original language, rather ' +
+      'than summarising them together.',
     args.multimodal
       ? '- For every non-null field, quote the EXACT verbatim text (in its original language) that supports it ' +
         'as "evidence" — and that quote MUST appear verbatim within your own "transcription" above. A value ' +
         'without matching evidence will be discarded.'
       : '- For every non-null field, quote the EXACT verbatim source text (in its original language) that supports it as "evidence". A value without matching evidence will be discarded.',
+    '- Exception: "estimatedComplexity" (low/medium/high) is YOUR judgment based on the project\'s described ' +
+      'scope, not a fact the document states outright — no real document literally says "this is medium ' +
+      'complexity". Give your best judgment and a confidence for it; it is not discarded for lacking a matching ' +
+      'quote the way other fields are, so do not leave it null just because nothing in the text names a ' +
+      'complexity level directly.',
     '- Assign each field your own confidence in [0,1] reflecting how certain you are the value is correct and complete.',
     '- Normalise "budget" to a THB amount. If the source uses a Buddhist Era year anywhere relevant to a date field, convert it to the Gregorian calendar (subtract 543).',
     '- Report "language" for the document overall as "th", "en", or "mixed".',

@@ -18,14 +18,36 @@ import type { AuthenticatedRequest } from '../middleware/auth.middleware';
  * flag are actually retrievable over HTTP, nothing more.
  */
 
-/** GET /api/tors — published records only, newest first. No filters/sort. */
+/**
+ * GET /api/tors — published records only, newest first. No filters/sort.
+ *
+ * Also excludes anything whose submission deadline has already passed.
+ * `lifecycle.stage` (core/awardStatus.ts) is a keyword classification of the
+ * announcement's TITLE, not the calendar — a listing titled "ประกวดราคา..."
+ * stays classified `bidding_open` forever unless the source republishes a
+ * winner announcement the crawler happens to pick up on a later run, so it
+ * cannot be trusted to reflect whether a vendor can still actually act.
+ * Computed at read time against `timeline.submissionDeadline`, the same
+ * pattern `analytics/keyDates.ts` already uses for the detail page's "days
+ * remaining" — not a stored/cron-maintained status, so it's always correct
+ * for "now" without another scheduled job to keep in sync. A TOR whose
+ * deadline was never successfully extracted (`submissionDeadline` absent) is
+ * kept rather than guessed closed — "absent stays absent" applies here too.
+ */
 export async function listTors(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const limit = Math.min(toPositiveInt(req.query.limit) ?? 50, 200);
     // BR-03 enforced again here, not just at approve-time: a bug elsewhere
     // that leaves a record in the wrong status must never leak through the
     // one public read path.
-    const records = await TorModel.find({ status: 'published' })
+    const records = await TorModel.find({
+      status: 'published',
+      $or: [
+        { 'timeline.submissionDeadline': { $exists: false } },
+        { 'timeline.submissionDeadline': null },
+        { 'timeline.submissionDeadline': { $gte: new Date() } },
+      ],
+    })
       .select('title agencyName budget.amountThb timeline.submissionDeadline lifecycle.stage createdAt')
       .sort({ createdAt: -1 })
       .limit(limit);
@@ -91,7 +113,8 @@ export async function getTor(req: Request, res: Response, next: NextFunction): P
       // seven days" has exactly one definition across every consumer.
       keyDates: computeKeyDates(record.timeline, new Date(), extractionConfig.keyDateUrgentWithinDays),
       // US-017: the structured fields a qualification-match check needs.
-      // `fields.qualificationRequirements` above only carries the raw text.
+      // `fields.qualificationRequirements` above only carries the itemized
+      // free-text list, not these structured values.
       qualifications: record.qualifications ?? null,
       // US-018 AC2: every AI-generated summary is labelled machine-generated
       // and non-authoritative — stated on every response, not left implicit.
