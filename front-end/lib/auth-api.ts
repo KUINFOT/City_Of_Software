@@ -46,6 +46,11 @@ export function login(credentials: Credentials): Promise<AuthSession> {
   return request('/auth/login', credentials);
 }
 
+export async function logout(token: string): Promise<void> {
+  const response = await fetch(`${apiBaseUrl}/auth/logout`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } });
+  if (!response.ok && response.status !== 401) throw new Error('Unable to end the current session.');
+}
+
 export async function register(input: Registration): Promise<RegistrationResponse> {
   const response = await fetch(`${apiBaseUrl}/auth/register`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input),

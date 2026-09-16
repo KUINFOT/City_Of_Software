@@ -16,6 +16,17 @@ const pastContractSchema = new Schema(
   { _id: false }
 );
 
+const profileVersionSchema = new Schema(
+  {
+    version: { type: Number, required: true, min: 1 },
+    effectiveAt: { type: Date, required: true },
+    // A complete, validated copy lets matching explain which declared
+    // capability set was in effect when a future match was computed.
+    profile: { type: Schema.Types.Mixed, required: true },
+  },
+  { _id: false }
+);
+
 const vendorProfileSchema = new Schema(
   {
     userId: { type: Schema.Types.ObjectId, ref: 'User', required: true, unique: true },
@@ -52,6 +63,8 @@ const vendorProfileSchema = new Schema(
       frequency: { type: String, enum: ['instant', 'daily_digest'], default: 'instant' },
       minMatchScore: { type: Number, default: 0 },
     },
+    profileVersion: { type: Number, required: true, default: 1, min: 1 },
+    profileHistory: { type: [profileVersionSchema], default: [] },
   },
   { timestamps: true }
 );

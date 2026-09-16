@@ -1,11 +1,13 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
 import { Bell, Clock3, FileText, Sparkles } from "lucide-react";
 import { AccountShell } from "@/components/account-shell";
 import { AccountMenu } from "@/components/account-menu";
 import { useAuth } from "@/components/auth-provider";
 import { getNotifications, VendorNotification } from "@/lib/notifications-api";
+import { getVendorProfile, ProfileCompleteness } from "@/lib/vendor-profile";
 
 const STAGE_LABEL: Record<string, string> = {
   comment_stage: "ช่วงรับฟังความคิดเห็น",
@@ -26,6 +28,7 @@ export default function DashboardPage() {
 
   const [matches, setMatches] = useState<VendorNotification[]>([]);
   const [matchesLoading, setMatchesLoading] = useState(true);
+  const [completeness, setCompleteness] = useState<ProfileCompleteness | null>(null);
 
   useEffect(() => {
     if (!token || user?.role !== "vendor") {
@@ -40,6 +43,11 @@ export default function DashboardPage() {
     return () => { cancelled = true; };
   }, [token, user?.role]);
 
+  useEffect(() => {
+    if (!user?.id || !token || user.role !== "vendor") return;
+    getVendorProfile(user.id, token).then((result) => setCompleteness(result.completeness)).catch(() => setCompleteness(null));
+  }, [token, user?.id, user?.role]);
+
   return (
     <AccountShell>
       <header className="account-header">
@@ -52,6 +60,11 @@ export default function DashboardPage() {
         <article><small>โครงการที่บันทึกไว้</small><strong className="orange">7 โครงการ</strong><p>1 เอกสาร TOR มีการแก้ไข</p></article>
         <article><small>การค้นหาที่บันทึกไว้</small><strong className="green">การแจ้งเตือน 4 รายการ</strong><p>น้ำท่วม ระบบระบายน้ำ ควบคุมจราจร</p></article>
       </section>
+
+      {user?.role === "vendor" && completeness && completeness.missingFields.length > 0 && <section className="dashboard-completeness-prompt" aria-label="ข้อมูลโปรไฟล์ที่ยังขาด">
+        <div><p>โปรไฟล์คุณครบ {completeness.score}%</p><h2>เพิ่มข้อมูลอีก {completeness.missingFields.length} รายการ เพื่อรับการจับคู่ที่ตรงขึ้น</h2><span>ยังขาด: {completeness.missingFields.map((field) => ({ organizationType: "ประเภทองค์กร", companyName: "ชื่อบริษัท", techStack: "เทคโนโลยี", serviceCategories: "หมวดหมู่บริการ", yearsExperience: "ประสบการณ์", certifications: "ใบรับรอง", pastContracts: "ผลงานที่ผ่านมา" })[field.key]).join(" · ")}</span></div>
+        <Link className="button button--primary" href="/settings#profile">เติมข้อมูลโปรไฟล์</Link>
+      </section>}
 
       <section className="dashboard-section" id="recommendations">
         <div className="section-title"><div><h2>TOR ที่ AI แนะนำตามโปรไฟล์</h2><span>รายการใหม่</span></div><a href="/settings#notifications">ตั้งค่าความสนใจ</a></div>

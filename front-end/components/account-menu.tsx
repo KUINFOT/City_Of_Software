@@ -43,7 +43,7 @@ export function AccountMenu({ compact = false }: { compact?: boolean }) {
         <Link href="/settings" role="menuitem" onClick={() => setMenuOpen(false)}><Settings size={15} /> ตั้งค่าบัญชี</Link>
         {user.role === "admin" && <><span className="header-account__divider" /><Link href="/admin/agency-monitor" role="menuitem" onClick={() => setMenuOpen(false)}><RadioTower size={15} /> ติดตามหน่วยงาน</Link><Link href="/admin/adapter-health" role="menuitem" onClick={() => setMenuOpen(false)}><Activity size={15} /> สถานะตัวเชื่อมต่อ</Link><Link href="/admin/accounts" role="menuitem" onClick={() => setMenuOpen(false)}><ShieldCheck size={15} /> บัญชีและบทบาท</Link><Link href="/admin/audit-log" role="menuitem" onClick={() => setMenuOpen(false)}><History size={15} /> ประวัติการตรวจสอบ</Link><Link href="/admin/export-repository" role="menuitem" onClick={() => setMenuOpen(false)}><HardDriveDownload size={15} /> ส่งออกข้อมูล</Link></>}
         <span className="header-account__divider" />
-        <button type="button" role="menuitem" onClick={() => { setMenuOpen(false); signOut(); router.push("/"); }}><LogOut size={15} /> ออกจากระบบ</button>
+        <button type="button" role="menuitem" onClick={() => { setMenuOpen(false); void signOut(); router.push("/"); }}><LogOut size={15} /> ออกจากระบบ</button>
       </div>}
     </div>
   );
