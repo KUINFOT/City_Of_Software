@@ -386,6 +386,9 @@ function buildPrompt(args: { multimodal: true } | { multimodal: false; sourceTex
     '- Assign each field your own confidence in [0,1] reflecting how certain you are the value is correct and complete.',
     '- Normalise "budget" to a THB amount. If the source uses a Buddhist Era year anywhere relevant to a date field, convert it to the Gregorian calendar (subtract 543).',
     '- Report "language" for the document overall as "th", "en", or "mixed".',
+    '- Write "summary" in the document\'s OWN dominant language — Thai for a Thai document — never translate it ' +
+      'into English. This applies even when the document mixes in English technical terms; match whatever ' +
+      'language the document itself is mostly written in, the same as every field\'s "evidence" already must.',
     '- Write "summary" as a concise, standardised natural-language summary of the document. Never state a ' +
       'specific number, name, date, or amount in the summary unless it is stated in the text — if you cannot ' +
       'verify a detail, describe the document in more general terms instead of inventing the specific.',

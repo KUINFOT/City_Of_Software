@@ -29,6 +29,7 @@ import {
 import { asComplexity, asDate, asNumber, asString, asStringArray } from '../core/fieldCoercion';
 import { decideRouting, type RoutingDecision } from '../core/reviewRouting';
 import { computeOverallConfidence } from '../core/confidenceScoring';
+import { parseThaiDate } from '../core/thaiDate';
 import { extractionConfig } from '../core/config';
 import { gcpConfig } from '../../config/gcpConfig';
 import { createLogger, type Logger } from '../core/logger';
@@ -375,6 +376,30 @@ async function applyExtractionToTor(
 ): Promise<void> {
   const corrected = rollup.correctedFields;
   const value = (key: ExtractedFieldKey) => structured.fields[key]?.value;
+  const evidence = (key: ExtractedFieldKey) => structured.fields[key]?.evidence ?? null;
+
+  /**
+   * Grounding (gemini.service.ts's verifyGrounding) only proves the
+   * "evidence" quote appears verbatim in the source — it never checks that
+   * the model's own parsed "value" is actually a correct reading of that
+   * quote. Live-confirmed 2026-09-16: a document whose text unambiguously
+   * said "ในวันที่ ๑๖ กันยายน ๒๕๖๙" (16 September) was stored as a
+   * submissionDeadline of the 17th, at confidence 1.0 — evidence intact,
+   * grounding passed, value simply wrong by a day, most likely the model's
+   * own BE→CE/timezone arithmetic slipping rather than a misread. Deriving
+   * the date deterministically from the grounded evidence text with the same
+   * parser the scrape pipeline already trusts (core/thaiDate.ts) removes the
+   * model's arithmetic from the trust chain entirely for the one kind of
+   * mistake here that actually costs a vendor a deadline. Only date-only,
+   * midnight UTC — any time-of-day the model captured is lost in exchange
+   * for the day itself being right, which matters far more. Falls back to
+   * the model's own value when the evidence text doesn't contain a date
+   * `parseThaiDate` recognises (e.g. a relative reference like "within 30
+   * days"), never silently to nothing.
+   */
+  function resolvedDate(key: ExtractedFieldKey): Date | undefined {
+    return parseThaiDate(evidence(key)) ?? asDate(value(key));
+  }
   // Fields this document actually contributed the (tied-or-better) merged
   // confidence for — everything else keeps whatever the TOR already had.
   const writable = new Set(
@@ -437,22 +462,22 @@ async function applyExtractionToTor(
     set.evaluationCriteria = [{ criterion: rawCriteria, weightPercent: undefined }];
   }
 
-  assignIfWritable(set, writable, 'timelineCommentClose', 'timeline.commentPeriodEnd', asDate(value('timelineCommentClose')));
+  assignIfWritable(set, writable, 'timelineCommentClose', 'timeline.commentPeriodEnd', resolvedDate('timelineCommentClose'));
   assignIfWritable(
     set,
     writable,
     'timelineClarificationMeeting',
     'timeline.clarificationMeetingDate',
-    asDate(value('timelineClarificationMeeting'))
+    resolvedDate('timelineClarificationMeeting')
   );
   assignIfWritable(
     set,
     writable,
     'timelineSubmissionDeadline',
     'timeline.submissionDeadline',
-    asDate(value('timelineSubmissionDeadline'))
+    resolvedDate('timelineSubmissionDeadline')
   );
-  assignIfWritable(set, writable, 'timelineAnnouncement', 'timeline.announcementDate', asDate(value('timelineAnnouncement')));
+  assignIfWritable(set, writable, 'timelineAnnouncement', 'timeline.announcementDate', resolvedDate('timelineAnnouncement'));
 
   // Allows pending_review, not just discovered/extracting: a TOR's second or
   // third document must still be able to refine it while a human reviewer

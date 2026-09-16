@@ -3,9 +3,18 @@
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { AlertTriangle, Building2, Copy, Download, Sparkles, Star, UserPlus } from "lucide-react";
+import { AlertTriangle, Building2, CheckCircle2, Copy, Download, HelpCircle, Sparkles, Star, UserPlus } from "lucide-react";
 import { useAuth } from "@/components/auth-provider";
-import { getMatchReasons, getTor, getTorDocuments, MatchReasonsResult, TorDetail, TorDocument } from "@/lib/tor-api";
+import {
+  getMatchReasons,
+  getQualificationMatch,
+  getTor,
+  getTorDocuments,
+  MatchReasonsResult,
+  QualificationMatchResult,
+  TorDetail,
+  TorDocument,
+} from "@/lib/tor-api";
 
 const STAGE_LABEL: Record<string, string> = {
   plan: "อยู่ระหว่างวางแผน",
@@ -41,6 +50,21 @@ const PROCUREMENT_METHOD_LABEL: Record<string, string> = {
 
 const COMPLEXITY_LABEL: Record<string, string> = { low: "ต่ำ", medium: "ปานกลาง", high: "สูง" };
 
+const REQUIREMENT_TYPE_LABEL: Record<string, string> = {
+  certification: "ใบรับรอง",
+  contract_value: "มูลค่าสัญญาสะสม",
+  experience_years: "ประสบการณ์",
+};
+
+// FR-VEN-01: the system never makes or implies an eligibility decision — so
+// every label here stays a neutral, factual comparison ("matches what's
+// stated" / "not yet specified"), never a verdict like "eligible"/"passed".
+const QUALIFICATION_OVERALL_LABEL: Record<string, string> = {
+  all_met: "โปรไฟล์ของคุณตรงตามคุณสมบัติที่ระบุไว้ทุกข้อ",
+  gaps_found: "มีบางข้อที่โปรไฟล์ของคุณยังไม่ตรงตามที่ระบุไว้ — ดูรายละเอียดด้านล่าง",
+  undetermined: "โปรไฟล์ของคุณยังไม่ได้ระบุข้อมูลที่จะเทียบกับคุณสมบัติเหล่านี้ได้ครบถ้วน",
+};
+
 function formatThb(value: number) {
   return `฿${new Intl.NumberFormat("th-TH").format(value)}`;
 }
@@ -68,6 +92,7 @@ export function TorDetailClient() {
   const [documents, setDocuments] = useState<TorDocument[] | null>(null);
 
   const [reasonsResult, setReasonsResult] = useState<MatchReasonsResult | null>(null);
+  const [qualMatch, setQualMatch] = useState<QualificationMatchResult | null>(null);
 
   const [linkCopied, setLinkCopied] = useState(false);
   const [copyError, setCopyError] = useState(false);
@@ -99,6 +124,15 @@ export function TorDetailClient() {
     getMatchReasons(torId, token)
       .then((result) => { if (!cancelled) setReasonsResult(result); })
       .catch(() => { if (!cancelled) setReasonsResult(null); });
+    return () => { cancelled = true; };
+  }, [viewerRole, token, torId]);
+
+  useEffect(() => {
+    if (viewerRole !== "vendor" || !token) return;
+    let cancelled = false;
+    getQualificationMatch(torId, token)
+      .then((result) => { if (!cancelled) setQualMatch(result); })
+      .catch(() => { if (!cancelled) setQualMatch(null); });
     return () => { cancelled = true; };
   }, [viewerRole, token, torId]);
 
@@ -262,6 +296,36 @@ export function TorDetailClient() {
               </ul>
             </section>
           )}
+
+          {viewerRole === "vendor" && qualMatch && qualMatch.overallStatus !== "no_requirements" && (
+            <section className="panel qualification-panel">
+              <div className="panel-title"><h2>คุณสมบัติของคุณเทียบกับที่ TOR ระบุไว้</h2></div>
+              <p className="qualification-panel__summary">{QUALIFICATION_OVERALL_LABEL[qualMatch.overallStatus]}</p>
+              <ul className="qualification-list">
+                {qualMatch.requirements.map((req, index) => (
+                  <li key={`${req.type}-${index}`} className={`qualification-list__item qualification-list__item--${req.status}`}>
+                    {req.status === "met" ? (
+                      <CheckCircle2 size={16} />
+                    ) : req.status === "not_met" ? (
+                      <AlertTriangle size={16} />
+                    ) : (
+                      <HelpCircle size={16} />
+                    )}
+                    <div>
+                      <strong>{REQUIREMENT_TYPE_LABEL[req.type] ?? req.type}</strong>
+                      <span>
+                        {req.status === "not_met" && req.gap
+                          ? req.gap
+                          : req.status === "undetermined"
+                            ? `TOR ระบุไว้ที่ ${req.required} — โปรไฟล์ของคุณยังไม่ได้ระบุข้อมูลนี้`
+                            : `ตรงตามที่ระบุไว้ (${req.required}${req.declared ? ` — โปรไฟล์ของคุณ: ${req.declared}` : ""})`}
+                      </span>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
         </div>
 
         <aside className="tor-detail-sidebar">
@@ -304,6 +368,20 @@ export function TorDetailClient() {
               </>
             )}
           </section>
+
+          {viewerRole === "vendor" && reasonsResult && reasonsResult.reasons.length > 0 && (
+            <section className="tor-sidebar-card">
+              <h2>ทำไมโครงการนี้ตรงกับคุณ</h2>
+              <ul className="tor-match-reasons">
+                {reasonsResult.reasons.map((reason, index) => (
+                  <li key={`${reason.type}-${index}`}>
+                    <strong>{reason.label}</strong>
+                    <span>{reason.detail}</span>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
 
           <section className="tor-sidebar-card">
             <h2>หน่วยงานผู้รับผิดชอบ</h2>

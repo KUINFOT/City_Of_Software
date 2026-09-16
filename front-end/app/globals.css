@@ -399,6 +399,15 @@ button { cursor: pointer; }
 .tor-ai-callout ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 8px; }
 .tor-ai-callout li { padding-left: 24px; position: relative; color: var(--ink); font-size: 14px; line-height: 1.5; }
 .tor-ai-callout li::before { content: "✓"; position: absolute; left: 0; color: var(--green); font-weight: 800; }
+.qualification-panel__summary { margin: 0 0 14px; color: var(--muted); font-size: 12px; line-height: 1.6; }
+.qualification-list { margin: 0; padding: 0; list-style: none; display: grid; gap: 12px; }
+.qualification-list__item { display: flex; align-items: flex-start; gap: 10px; }
+.qualification-list__item div { display: grid; gap: 3px; }
+.qualification-list__item strong { font-size: 12px; color: var(--ink); }
+.qualification-list__item span { font-size: 11px; line-height: 1.6; color: var(--muted); }
+.qualification-list__item--met svg { color: var(--green); flex-shrink: 0; margin-top: 1px; }
+.qualification-list__item--not_met svg { color: var(--orange); flex-shrink: 0; margin-top: 1px; }
+.qualification-list__item--undetermined svg { color: var(--muted); flex-shrink: 0; margin-top: 1px; }
 
 .tor-sidebar-card { padding: 24px; display: grid; gap: 16px; background: var(--white); border: 1px solid var(--line); border-radius: 16px; }
 .tor-sidebar-card h2 { margin: 0; font-size: 16px; font-weight: 800; color: var(--ink); }
@@ -426,6 +435,10 @@ button { cursor: pointer; }
 .tor-department span { font-size: 12px; color: var(--muted); }
 .tor-department-contact { display: grid; gap: 8px; color: var(--muted); font-size: 13px; }
 .tor-department-contact p { margin: 0; }
+.tor-match-reasons { display: grid; gap: 12px; margin: 0; padding: 0; list-style: none; }
+.tor-match-reasons li { display: grid; gap: 3px; }
+.tor-match-reasons strong { color: var(--ink); font-size: 12px; }
+.tor-match-reasons span { color: var(--muted); font-size: 11px; line-height: 1.5; }
 
 .tor-sidebar-card--prompt { text-align: center; justify-items: center; }
 .tor-sidebar-card--prompt svg { color: var(--orange); }
