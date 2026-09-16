@@ -3,7 +3,7 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { Building2, CalendarDays, FileText, Search, SlidersHorizontal } from "lucide-react";
+import { Building2, CalendarDays, Search, SlidersHorizontal } from "lucide-react";
 import { listTors, TorSummary } from "@/lib/tor-api";
 
 const STAGE_LABEL: Record<string, string> = {
@@ -158,7 +158,6 @@ export function BrowseTorsClient() {
                     </span>
                   </div>
                   <div className="tor-meta-grid">
-                    <span><FileText size={15} />{tor._id}</span>
                     <span><Building2 size={15} />{tor.agencyName}</span>
                     <span><CalendarDays size={15} />กำหนดส่งข้อเสนอ {formatDate(tor.timeline?.submissionDeadline)}</span>
                   </div>

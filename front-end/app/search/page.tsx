@@ -22,6 +22,7 @@ type SearchFilters = Filters & {
 };
 type SortOption = (typeof sortOptions)[number];
 type DocumentRecord = {
+	_id: string;
 	projectTitle: string;
 	agency: string;
 	budget: string;
@@ -239,7 +240,7 @@ export default function SearchPage() {
 							</select>
 						</label>
 					</div>
-					<MatchGrid matches={documents.map((document, index) => ({ icon: icons[index % icons.length], category: document.projectType || document.technology || "Software Project", match: "Project", title: document.projectTitle, agency: document.agency, budget: document.budget || "Not specified", deadline: formatDeadline(document.deadline) }))} />
+					<MatchGrid matches={documents.map((document, index) => ({ id: document._id, icon: icons[index % icons.length], category: document.projectType || document.technology || "Software Project", match: "Project", title: document.projectTitle, agency: document.agency, budget: document.budget || "Not specified", deadline: formatDeadline(document.deadline) }))} />
 				</section>
 			</main>
 

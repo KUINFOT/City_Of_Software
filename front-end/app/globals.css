@@ -149,7 +149,7 @@ button { cursor: pointer; }
 .card-meta div:last-child { text-align: right; }
 .card-meta div:last-child strong { color: #485267; }
 .card-actions { display: grid; grid-template-columns: 1fr 35px; gap: 7px; }
-.card-actions button { height: 34px; color: #44516a; background: #f8fafc; border: 1px solid #e6ebf2; border-radius: 5px; font-size: 9px; }
+.card-actions button, .card-actions a { height: 34px; display: flex; align-items: center; justify-content: center; color: #44516a; background: #f8fafc; border: 1px solid #e6ebf2; border-radius: 5px; font-size: 9px; text-decoration: none; }
 .bottom-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
 .panel { padding: 20px; background: #fff; border: 1px solid var(--line); border-radius: 11px; box-shadow: var(--shadow); }
 .panel-title { margin-bottom: 15px; }
@@ -517,7 +517,7 @@ button { cursor: pointer; }
 .results-content .match-card h3 { min-height: 36px; margin-top: 11px; font-size: 10px; }
 .results-content .match-card > p { font-size: 8px; }
 .results-content .card-meta { padding-top: 14px; padding-bottom: 11px; }
-.results-content .card-actions button { height: 29px; font-size: 8px; }
+.results-content .card-actions button, .results-content .card-actions a { height: 29px; font-size: 8px; }
 .pagination { display: flex; justify-content: center; align-items: center; gap: 7px; margin-top: 30px; }
 .pagination button { min-width: 27px; height: 27px; padding: 0 9px; color: #3b4a63; background: #fff; border: 1px solid #e2e7ee; border-radius: 5px; font-size: 8px; }
 .pagination button:first-child, .pagination button:last-child { padding: 0 12px; }

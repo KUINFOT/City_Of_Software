@@ -1,7 +1,9 @@
+import Link from "next/link";
 import { Bookmark, Sparkles } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 
 type Match = {
+  id: string;
   icon: LucideIcon;
   category: string;
   match: string;
@@ -19,7 +21,7 @@ export function MatchGrid({ matches }: MatchGridProps) {
   return (
     <div className="match-grid">
       {matches.map(({ icon: Icon, ...match }) => (
-        <article className="match-card" key={match.title}>
+        <article className="match-card" key={match.id}>
           <div className="match-card__top">
             <span>
               <Icon size={14} />
@@ -48,7 +50,7 @@ export function MatchGrid({ matches }: MatchGridProps) {
           </div>
 
           <div className="card-actions">
-            <button>View Project</button>
+            <Link href={`/tors/${match.id}`}>View Project</Link>
             <button aria-label="Bookmark">
               <Bookmark size={16} />
             </button>
