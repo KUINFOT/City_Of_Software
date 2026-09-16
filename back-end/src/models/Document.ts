@@ -6,9 +6,10 @@ const documentSchema = new Schema(
     projectTitle: { type: String, required: true },
     mimeType: { type: String, required: true },
     size: { type: Number, required: true },
-    status: {
+    status: { type: String, enum: ['uploaded', 'extracted', 'summarized', 'error'], default: 'uploaded' },
+    tenderStatus: {
       type: String,
-      enum: ['draft_feedback', 'open_for_bids', 'under_review', 'uploaded', 'extracted', 'summarized', 'error'],
+      enum: ['draft_feedback', 'open_for_bids', 'under_review', 'closed'],
       default: 'draft_feedback',
     },
     datePublished: { type: Date, default: null },
