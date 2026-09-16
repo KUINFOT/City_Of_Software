@@ -106,6 +106,11 @@ export const extractionConfig = {
   outlierIqrMultiplier: num('OUTLIER_IQR_MULTIPLIER', 1.5),
   /** Below this many comparable records, suppress the flag (FR-ANL-05). */
   outlierMinComparableN: num('OUTLIER_MIN_COMPARABLE_N', 5),
+
+  // --- Key dates (US-019/FR-REP-07) ---------------------------------------
+
+  /** A key date within this many days is visually emphasised as urgent. */
+  keyDateUrgentWithinDays: num('KEY_DATE_URGENT_WITHIN_DAYS', 7),
 } as const;
 
 export type ExtractionConfig = typeof extractionConfig;

@@ -35,7 +35,20 @@ export const gcpConfig = {
   /** Must reference a processor with Thai OCR support enabled (FR-EXT-04). */
   docAiProcessorId: optional('DOC_AI_PROCESSOR_ID'),
   vertexLocation: optional('VERTEX_AI_LOCATION', 'us-central1'),
-  vertexModel: optional('VERTEX_AI_MODEL', 'gemini-2.0-flash'),
+  /**
+   * `gemini-2.5-flash` — confirmed by live testing against this project's
+   * actual model catalog (2026-09-14), not by pricing research: every
+   * newer/lighter model tried (gemini-3.5-flash-lite, gemini-3-flash,
+   * gemini-2.5-flash-lite, gemini-2.0-flash, gemini-1.5-flash, ...) 404'd
+   * with "not found or your project does not have access to it," in both
+   * us-central1 and asia-southeast1. This is the one model this project's
+   * Gemini Enterprise Agent Platform access actually exposes right now —
+   * revisit once a lighter tier is confirmed available (e.g. after a
+   * project access-tier change), since it costs more than a Flash-Lite
+   * model would for the same structured-extraction task (see 13.10 in
+   * docs/extraction-pipeline.md).
+   */
+  vertexModel: optional('VERTEX_AI_MODEL', 'gemini-2.5-flash'),
 } as const;
 
 export type GcpConfig = typeof gcpConfig;

@@ -4,15 +4,16 @@ import { SessionModel } from '../models/Session';
 import { readSessionToken, sessionIdleExpiresAt } from '../services/session.service';
 
 export type AuthenticatedRequest = Request & { authUser: { id: string; role: 'vendor' | 'reviewer' | 'admin'; name: string } };
+type AuthUser = AuthenticatedRequest['authUser'];
 
-/** Checks a signed, active session and reloads the account on every request. */
-export async function requireAuthenticated(req: Request, res: Response, next: NextFunction): Promise<void> {
+/**
+ * Validates the signed token, server-side idle session, and current account
+ * state. A role/status change or logout therefore takes effect immediately.
+ */
+async function authenticate(req: Request): Promise<AuthUser | null> {
   const token = req.header('authorization')?.match(/^Bearer\s+(.+)$/i)?.[1];
   const session = token ? readSessionToken(token) : null;
-  if (!session) {
-    res.status(401).json({ error: 'Please sign in again to continue.' });
-    return;
-  }
+  if (!session) return null;
 
   const now = new Date();
   const activeSession = await SessionModel.findOneAndUpdate(
@@ -20,18 +21,21 @@ export async function requireAuthenticated(req: Request, res: Response, next: Ne
     { $set: { lastActivityAt: now, expiresAt: sessionIdleExpiresAt(now) } },
     { new: true }
   );
-  if (!activeSession) {
-    res.status(401).json({ error: 'Your session has expired. Please sign in again.' });
-    return;
-  }
+  if (!activeSession) return null;
 
   const user = await UserModel.findById(session.sub).select('name role status sessionVersion');
-  if (!user || user.status !== 'active' || user.sessionVersion !== session.sv || !['vendor', 'reviewer', 'admin'].includes(user.role)) {
+  if (!user || user.status !== 'active' || user.sessionVersion !== session.sv || !['vendor', 'reviewer', 'admin'].includes(user.role)) return null;
+  return { id: user._id.toString(), name: user.name, role: user.role as AuthUser['role'] };
+}
+
+/** Checks an active signed-in user without imposing a role. */
+export async function requireAuthenticated(req: Request, res: Response, next: NextFunction): Promise<void> {
+  const authUser = await authenticate(req);
+  if (!authUser) {
     res.status(401).json({ error: 'Please sign in again to continue.' });
     return;
   }
-
-  (req as AuthenticatedRequest).authUser = { id: user._id.toString(), name: user.name, role: user.role as 'vendor' | 'reviewer' | 'admin' };
+  (req as AuthenticatedRequest).authUser = authUser;
   next();
 }
 
@@ -45,13 +49,32 @@ export function requireSelfOrAdmin(req: Request, res: Response, next: NextFuncti
   next();
 }
 
-/** Requires an active administrator session. */
+/** Admin-role-gated routes (account/role management, etc). */
 export async function requireAdmin(req: Request, res: Response, next: NextFunction): Promise<void> {
-  await requireAuthenticated(req, res, () => {
-    if ((req as AuthenticatedRequest).authUser.role !== 'admin') {
-      res.status(403).json({ error: 'Administrator access is required.' });
-      return;
-    }
-    next();
-  });
+  const authUser = await authenticate(req);
+  if (!authUser) {
+    res.status(401).json({ error: 'Please sign in again to continue.' });
+    return;
+  }
+  if (authUser.role !== 'admin') {
+    res.status(403).json({ error: 'Administrator access is required.' });
+    return;
+  }
+  (req as AuthenticatedRequest).authUser = authUser;
+  next();
+}
+
+/** Vendor-role-gated routes, including qualification matching. */
+export async function requireVendor(req: Request, res: Response, next: NextFunction): Promise<void> {
+  const authUser = await authenticate(req);
+  if (!authUser) {
+    res.status(401).json({ error: 'Please sign in again to continue.' });
+    return;
+  }
+  if (authUser.role !== 'vendor') {
+    res.status(403).json({ error: 'A vendor account is required.' });
+    return;
+  }
+  (req as AuthenticatedRequest).authUser = authUser;
+  next();
 }

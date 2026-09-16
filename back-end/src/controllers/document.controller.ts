@@ -4,6 +4,7 @@ import { extractText } from '../services/documentAI.service';
 import { summarize } from '../services/gemini.service';
 import { LocalBlobStore } from '../extraction/pipeline/storage';
 import { extractionConfig } from '../extraction/core/config';
+import { readDocumentAccessToken } from '../services/documentAccess.service';
 
 /** POST /api/documents/upload — accept a file, run (stub) extraction, persist. */
 export async function uploadDocument(
@@ -80,6 +81,17 @@ export async function getDocument(
  * have anything to serve here — `origin.storageKey` is unset for a document
  * created through the older POST /api/documents/upload path below, which
  * never persists its buffer past the request.
+ *
+ * US-016 addition: a `?token=` query param, when present, is verified as a
+ * signed document-access token (services/documentAccess.service.ts) scoped
+ * to this exact document id — this is the "signed link" `GET /api/tors/:id
+ * /documents` hands a vendor. A present-but-invalid/expired/mismatched token
+ * is rejected with 403; a request with NO token at all is left exactly as
+ * it was, because this same route is also called unauthenticated by the
+ * admin document-correction flow (US-043), which has no token to send and
+ * no auth system yet to gate it with. Making a token mandatory here would
+ * break that caller without actually adding security, since nothing
+ * protects this route from a direct, unauthenticated call either way yet.
  */
 export async function getDocumentFile(
   req: Request,
@@ -92,6 +104,16 @@ export async function getDocumentFile(
       res.status(404).json({ error: 'Document not found' });
       return;
     }
+
+    const token = typeof req.query.token === 'string' ? req.query.token : null;
+    if (token) {
+      const payload = readDocumentAccessToken(token);
+      if (!payload || payload.documentId !== req.params.id) {
+        res.status(403).json({ error: 'This link has expired or is no longer valid.' });
+        return;
+      }
+    }
+
     if (!doc.origin?.storageKey) {
       res.status(404).json({
         error: 'This document has no stored bytes to serve (it was uploaded through a path that does not persist the original file).',

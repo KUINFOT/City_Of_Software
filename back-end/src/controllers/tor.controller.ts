@@ -1,7 +1,13 @@
 import { Request, Response, NextFunction } from 'express';
 import { TorModel } from '../models/Tor';
+import { DocumentModel } from '../models/Document';
+import { VendorProfileModel } from '../models/VendorProfile';
 import { EXTRACTED_FIELD_KEYS, FIELD_TO_TOR_PATH } from '../extraction/core/fieldSchema';
 import { extractionConfig } from '../extraction/core/config';
+import { computeKeyDates } from '../analytics/keyDates';
+import { matchQualifications } from '../matching/qualificationMatch';
+import { createDocumentAccessToken } from '../services/documentAccess.service';
+import type { AuthenticatedRequest } from '../middleware/auth.middleware';
 
 /**
  * The only Tor-facing read endpoints in this codebase today. Deliberately
@@ -55,6 +61,18 @@ export async function getTor(req: Request, res: Response, next: NextFunction): P
       status: record.status,
       lifecycle: record.lifecycle,
       timeline: record.timeline,
+      // US-016/FR-REP-04: "source address ... and import method" — the rest
+      // of provenance (the document list itself) is a separate call, GET
+      // /api/tors/:id/documents, so this response doesn't have to carry raw
+      // storage keys.
+      source: record.source ?? null,
+      documentCount: record.documentIds?.length ?? 0,
+      // US-019/FR-REP-07: computed here, not left to the client, so "within
+      // seven days" has exactly one definition across every consumer.
+      keyDates: computeKeyDates(record.timeline, new Date(), extractionConfig.keyDateUrgentWithinDays),
+      // US-017: the structured fields a qualification-match check needs.
+      // `fields.qualificationRequirements` above only carries the raw text.
+      qualifications: record.qualifications ?? null,
       // US-018 AC2: every AI-generated summary is labelled machine-generated
       // and non-authoritative — stated on every response, not left implicit.
       summaryAi: record.summaryAi
@@ -79,6 +97,76 @@ export async function getTor(req: Request, res: Response, next: NextFunction): P
           }
         : null,
     });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * GET /api/tors/:id/documents — US-016: the original source document(s)
+ * backing a published TOR, each with a signed, time-limited retrieval link.
+ * Same BR-03 published-only guard as `getTor`, for the same reason — a
+ * document belonging to an unpublished record must never leak through here.
+ */
+export async function listTorDocuments(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const tor = await TorModel.findOne({ _id: req.params.id, status: 'published' })
+      .select('documentIds')
+      .lean();
+    if (!tor) {
+      res.status(404).json({ error: 'TOR not found' });
+      return;
+    }
+
+    const docs = await DocumentModel.find({ _id: { $in: tor.documentIds ?? [] } })
+      .select('originalName mimeType size origin createdAt')
+      .lean();
+
+    res.json({
+      documents: docs.map((doc) => ({
+        _id: doc._id,
+        originalName: doc.originalName,
+        mimeType: doc.mimeType,
+        size: doc.size,
+        sourceUrl: doc.origin?.sourceUrl ?? null,
+        label: doc.origin?.label ?? null,
+        capturedAt: doc.origin?.downloadedAt ?? doc.createdAt,
+        // null when there are no stored bytes to fetch — SCRUM-16's "handle
+        // unavailable original document" case, mirroring getDocumentFile's
+        // own 404 for the same condition rather than handing out a dead link.
+        // Relative to the API base (no leading /api) — callers already
+        // prepend their own base URL, which itself ends in /api (see
+        // front-end/lib/auth-api.ts's apiBaseUrl convention).
+        fileUrl: doc.origin?.storageKey
+          ? `/documents/${doc._id}/file?token=${createDocumentAccessToken(String(doc._id)).token}`
+          : null,
+      })),
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * GET /api/tors/:id/qualification-match — US-017/FR-NOT-02. Vendor-only
+ * (gated by requireVendor in the route); a guest gets 401 from the
+ * middleware and the frontend shows the registration prompt instead
+ * (UC-03 extension 5a) rather than calling this at all.
+ */
+export async function getQualificationMatch(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const tor = await TorModel.findOne({ _id: req.params.id, status: 'published' })
+      .select('qualifications')
+      .lean();
+    if (!tor) {
+      res.status(404).json({ error: 'TOR not found' });
+      return;
+    }
+
+    const authUser = (req as AuthenticatedRequest).authUser;
+    const vendorProfile = await VendorProfileModel.findOne({ userId: authUser.id }).lean();
+
+    res.json(matchQualifications(tor.qualifications, vendorProfile));
   } catch (err) {
     next(err);
   }
