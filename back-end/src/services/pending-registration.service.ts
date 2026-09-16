@@ -36,7 +36,10 @@ export function createPendingRegistrationToken(registration: PendingRegistration
 export function readPendingRegistrationToken(token: string): PendingRegistrationPayload | null {
   try {
     const source = Buffer.from(token, 'base64url');
-    if (source.length <= 28) return null;
+    // Base64URL permits several text spellings for the same final byte. Accept
+    // only the exact canonical encoding we issue, so any character change to a
+    // link is rejected before attempting decryption.
+    if (source.length <= 28 || source.toString('base64url') !== token) return null;
     const iv = source.subarray(0, 12);
     const tag = source.subarray(12, 28);
     const encrypted = source.subarray(28);

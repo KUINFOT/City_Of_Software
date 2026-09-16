@@ -4,16 +4,20 @@ import { EmailVerificationModel } from '../models/EmailVerification';
 import { PasswordResetModel } from '../models/PasswordReset';
 import { VendorOnboardingModel } from '../models/VendorOnboarding';
 import { VendorProfileModel } from '../models/VendorProfile';
+import { SessionModel } from '../models/Session';
 import { env } from '../config/env';
 import { hashVerificationToken, issuePasswordResetEmail, issuePendingRegistrationEmail, issueVerificationEmail } from '../services/email-verification.service';
 import { hashPassword, verifyPassword } from '../services/password.service';
-import { createSessionToken } from '../services/session.service';
+import { createSessionId, createSessionToken, readSessionToken, sessionIdleExpiresAt } from '../services/session.service';
 import { PendingRegistration, readPendingRegistrationToken } from '../services/pending-registration.service';
 import { buildVendorProfileUpdate, upsertVendorProfile } from './vendorProfile.controller';
 
 const REGISTERABLE_ROLES = new Set(['vendor', 'reviewer']);
 const COMMON_PASSWORDS = new Set(['password', 'password123', '1234567890', 'qwertyuiop', 'cityofsoftware']);
 const RESET_MESSAGE = 'If an account exists for this email, a password reset link has been sent.';
+const MAX_FAILED_LOGIN_ATTEMPTS = 5;
+const LOGIN_LOCK_MS = 15 * 60 * 1000;
+const RESET_REQUEST_COOLDOWN_MS = 60 * 1000;
 
 function readText(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
@@ -203,7 +207,18 @@ export async function requestPasswordReset(req: Request, res: Response): Promise
   const email = normalizeEmail(req.body.email);
   if (isEmail(email)) {
     const user = await UserModel.findOne({ email });
-    if (user && user.emailVerified) await issuePasswordResetEmail(user._id.toString(), user.email);
+    if (user && user.emailVerified) {
+      const latest = await PasswordResetModel.findOne({ userId: user._id, usedAt: null }).sort({ sentAt: -1 });
+      if (!latest || Date.now() - latest.sentAt.getTime() >= RESET_REQUEST_COOLDOWN_MS) {
+        try {
+          await issuePasswordResetEmail(user._id.toString(), user.email);
+        } catch (error) {
+          // Do not let a delivery outage turn this endpoint into an account
+          // enumeration oracle. Operational logs still retain the failure.
+          console.error('[password reset] delivery failed', error);
+        }
+      }
+    }
   }
   res.json({ message: RESET_MESSAGE });
 }
@@ -213,8 +228,26 @@ export async function resetPassword(req: Request, res: Response): Promise<void> 
   if (!token || password.length < 10 || COMMON_PASSWORDS.has(password.toLowerCase())) { res.status(400).json({ error: 'Choose a non-common password of at least 10 characters.' }); return; }
   const reset = await PasswordResetModel.findOneAndUpdate({ tokenHash: hashVerificationToken(token), usedAt: null, expiresAt: { $gt: new Date() } }, { $set: { usedAt: new Date() } }, { new: true });
   if (!reset) { res.status(400).json({ error: 'This password reset link is invalid or expired.' }); return; }
-  await UserModel.findByIdAndUpdate(reset.userId, { $set: { passwordHash: await hashPassword(password) }, $inc: { sessionVersion: 1 } });
+  const now = new Date();
+  await Promise.all([
+    UserModel.findByIdAndUpdate(reset.userId, { $set: { passwordHash: await hashPassword(password) }, $inc: { sessionVersion: 1 } }),
+    SessionModel.updateMany({ userId: reset.userId, revokedAt: null }, { $set: { revokedAt: now } }),
+  ]);
   res.json({ message: 'Your password has been reset. You can now sign in.' });
+}
+
+/** POST /api/auth/logout — revoke the current server-side session immediately. */
+export async function logout(req: Request, res: Response): Promise<void> {
+  const token = req.header('authorization')?.match(/^Bearer\s+(.+)$/i)?.[1];
+  const session = token ? readSessionToken(token) : null;
+  if (session) {
+    await SessionModel.updateOne(
+      { userId: session.sub, sessionId: session.sid, revokedAt: null },
+      { $set: { revokedAt: new Date() } }
+    );
+  }
+  // Deliberately idempotent: the browser can always complete local logout.
+  res.status(204).end();
 }
 
 /** POST /api/auth/login — validate credentials against MongoDB. */
@@ -228,7 +261,21 @@ export async function login(req: Request, res: Response): Promise<void> {
   }
 
   const user = await UserModel.findOne({ email });
+  const now = new Date();
+  if (user?.loginLockedUntil && user.loginLockedUntil > now) {
+    res.status(429).json({ error: 'Too many failed sign-in attempts. Please try again in 15 minutes.' });
+    return;
+  }
   if (!user || !(await verifyPassword(password, user.passwordHash))) {
+    if (user) {
+      const failedAttempts = user.loginLockedUntil && user.loginLockedUntil <= now ? 1 : (user.failedLoginAttempts ?? 0) + 1;
+      const lockUntil = failedAttempts >= MAX_FAILED_LOGIN_ATTEMPTS ? new Date(now.getTime() + LOGIN_LOCK_MS) : null;
+      await UserModel.updateOne({ _id: user._id }, { $set: { failedLoginAttempts: failedAttempts, loginLockedUntil: lockUntil } });
+      if (lockUntil) {
+        res.status(429).json({ error: 'Too many failed sign-in attempts. Please try again in 15 minutes.' });
+        return;
+      }
+    }
     res.status(401).json({ error: 'Email or password is incorrect.' });
     return;
   }
@@ -241,7 +288,11 @@ export async function login(req: Request, res: Response): Promise<void> {
     return;
   }
 
-  user.lastLoginAt = new Date();
+  user.lastLoginAt = now;
+  user.failedLoginAttempts = 0;
+  user.loginLockedUntil = null;
   await user.save();
-  res.json({ user: publicUser(user), token: createSessionToken({ userId: user._id.toString(), role: user.role as 'vendor' | 'reviewer' | 'admin', sessionVersion: user.sessionVersion }) });
+  const sessionId = createSessionId();
+  await SessionModel.create({ userId: user._id, sessionId, lastActivityAt: now, expiresAt: sessionIdleExpiresAt(now) });
+  res.json({ user: publicUser(user), token: createSessionToken({ userId: user._id.toString(), role: user.role as 'vendor' | 'reviewer' | 'admin', sessionId, sessionVersion: user.sessionVersion }) });
 }

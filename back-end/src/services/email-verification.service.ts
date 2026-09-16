@@ -71,6 +71,20 @@ async function deliverPasswordResetEmail(email: string, token: string): Promise<
     await transporter.sendMail({ from: `City of Software <${env.gmailUser}>`, to: email, subject: message, text: `Reset your password: ${url}\n\nThis link expires in 1 hour.`, html: `<p><a href="${url}">Reset your password</a></p><p>This link expires in 1 hour.</p>` });
     return;
   }
+  if (env.resendApiKey && env.emailFrom) {
+    const response = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${env.resendApiKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        from: env.emailFrom,
+        to: [email],
+        subject: message,
+        html: `<p>We received a request to reset your City of Software password.</p><p><a href="${url}">Reset your password</a></p><p>This link expires in 1 hour. If you did not request it, you can ignore this email.</p>`,
+      }),
+    });
+    if (!response.ok) throw new Error('Email delivery provider rejected the password reset email.');
+    return;
+  }
   if (env.nodeEnv === 'production') throw new Error('Email delivery is not configured.');
   console.info(`[password reset] Development link for ${email}: ${url}`);
 }

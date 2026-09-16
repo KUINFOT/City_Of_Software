@@ -1,7 +1,7 @@
 "use client";
 
-import { createContext, ReactNode, useContext, useEffect, useMemo, useState } from "react";
-import { AuthSession, AuthUser, login, RegistrationResponse, register } from "@/lib/auth-api";
+import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { AuthSession, AuthUser, login, logout, RegistrationResponse, register } from "@/lib/auth-api";
 
 type RegistrationInput = { name: string; email: string; password: string; organization: string; phone: string; role: "vendor" | "reviewer" };
 type AuthResult = { ok: true; registration?: RegistrationResponse } | { ok: false; message: string };
@@ -12,10 +12,11 @@ type AuthContextValue = {
   ready: boolean;
   signIn: (email: string, password: string) => Promise<AuthResult>;
   register: (input: RegistrationInput) => Promise<AuthResult>;
-  signOut: () => void;
+  signOut: () => Promise<void>;
 };
 
 const STORAGE_KEY = "city-of-software-user";
+const CLIENT_IDLE_TIMEOUT_MS = 30 * 60 * 1000;
 const AuthContext = createContext<AuthContextValue | null>(null);
 
 function isAuthSession(value: unknown): value is AuthSession {
@@ -49,6 +50,33 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(nextSession));
   };
 
+  const signOut = useCallback(async () => {
+    const activeToken = token;
+    window.localStorage.removeItem(STORAGE_KEY);
+    setUser(null);
+    setToken(null);
+    if (activeToken) {
+      try { await logout(activeToken); }
+      catch { /* Local cleanup still protects this browser if the network is unavailable. */ }
+    }
+  }, [token]);
+
+  useEffect(() => {
+    if (!token) return;
+    let timer: ReturnType<typeof setTimeout>;
+    const resetTimer = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => { void signOut(); }, CLIENT_IDLE_TIMEOUT_MS);
+    };
+    const activityEvents: Array<keyof WindowEventMap> = ["pointerdown", "keydown", "scroll", "touchstart"];
+    activityEvents.forEach((eventName) => window.addEventListener(eventName, resetTimer, { passive: true }));
+    resetTimer();
+    return () => {
+      clearTimeout(timer);
+      activityEvents.forEach((eventName) => window.removeEventListener(eventName, resetTimer));
+    };
+  }, [signOut, token]);
+
   const value = useMemo<AuthContextValue>(() => ({
     user,
     token,
@@ -68,12 +96,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return { ok: false, message: error instanceof Error ? error.message : "Unable to create your account." };
       }
     },
-    signOut: () => {
-      window.localStorage.removeItem(STORAGE_KEY);
-      setUser(null);
-      setToken(null);
-    },
-  }), [ready, token, user]);
+    signOut,
+  }), [ready, signOut, token, user]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
