@@ -1,45 +1,72 @@
-import {
-	BarChart3,
-	ChevronDown,
-	CircleHelp,
-	Landmark,
-	Map,
-	Monitor,
-	Network,
-	Search,
-	SlidersHorizontal,
-} from "lucide-react";
+"use client";
+
+import { FormEvent, useEffect, useState } from "react";
+import { BarChart3, CircleHelp, Landmark, Map, Monitor, Network, Search, SlidersHorizontal } from "lucide-react";
 import { SiteHeader } from "@/components/site-header";
 import { Brand } from "@/components/brand";
 import { MatchGrid } from "@/components/match-grid";
 
-const matches = [
-	{ icon: Monitor, category: "Smart City Software", match: "94% Match", title: "Bangkok Smart Grid & District Energy Management Software Solution", agency: "BMA Digital Strategy Division", budget: "฿ 12,850,000", deadline: "12 April 2026" },
-	{ icon: Network, category: "Health Informatics", match: "88% Match", title: "Public Health Data Platform Integration & Patient Referral Engine", agency: "BMA Medical Service Division", budget: "฿ 48,900,000", deadline: "18 April 2026" },
-	{ icon: BarChart3, category: "Predictive Analytics", match: "82% Match", title: "Predictive AI Flood Control & Drainage Monitoring Platform Upgrade", agency: "Department of Drainage and Sewerage", budget: "฿ 34,200,000", deadline: "25 April 2026" },
-	{ icon: CircleHelp, category: "Computer Vision", match: "96% Match", title: "District CCTV Surveillance Machine Vision Analysis Engine", agency: "Sathon & Pathum Wan District Office", budget: "฿ 8,500,000", deadline: "15 April 2026" },
-	{ icon: Monitor, category: "E-Learning & LMS", match: "92% Match", title: "BMA School Digital Literacy Online LMS Platform", agency: "BMA Department of Education", budget: "฿ 14,900,000", deadline: "20 April 2026" },
-	{ icon: Map, category: "GIS & Mapping", match: "85% Match", title: "BMA Open Government GIS Geo-Database Update", agency: "BMA Department of City Planning", budget: "฿ 6,200,000", deadline: "05 May 2026" },
-];
+const sortOptions = ["Highest Match %","Lowest Budget", "Highest Budget", "Newest", "Oldest", "Closest Deadline", "Furthest Deadline"];
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000/api";
+const fieldNames = ["technology", "projectType", "agency"] as const;
+type FilterField = (typeof fieldNames)[number];
+type Filters = Record<FilterField, string[]>;
+type SearchFilters = Filters & {
+	status: string[];
+	budgetMin: string;
+	budgetMax: string;
+	publishedAfter: string;
+	publishedBefore: string;
+	deadlineAfter: string;
+	deadlineBefore: string;
+};
+type SortOption = (typeof sortOptions)[number];
+type DocumentRecord = {
+	projectTitle: string;
+	agency: string;
+	budget: string;
+	deadline?: string | null;
+	technology: string;
+	projectType: string;
+};
 
-const filters = [
-	{ title: "Technology Category", options: [["Smart City Software", "12", true], ["Health Informatics", "8", true], ["Predictive Analytics", "15", false], ["Computer Vision", "5", false], ["GIS & Mapping", "9", false]] },
-	{ title: "Project Type", options: [["SaaS Platform", "24", true], ["On-Premise Upgrade", "14", false], ["System Integration", "31", false]] },
-	{ title: "Agency", options: [["BMA Digital Strategy", "8", false], ["BMA Medical Service", "12", false], ["Dept. of Drainage", "5", false], ["City Planning", "9", false]] },
-	{ title: "Tender Status", options: [["Draft Feedback", "8", false], ["Open for Bids", "24", true], ["Under Review", "19", false]] },
-];
+const icons = [Monitor, Network, BarChart3, CircleHelp, Map];
 
-const sortOptions = ["Highest Match %", "Newest First", "Deadline"];
+function emptyFilters(): SearchFilters {
+	return { technology: [], projectType: [], agency: [], status: [], budgetMin: "", budgetMax: "", publishedAfter: "", publishedBefore: "", deadlineAfter: "", deadlineBefore: "" };
+}
 
-function FilterGroup({ title, options }: { title: string; options: (string | boolean)[][] }) {
+function readFilters(params: URLSearchParams): SearchFilters {
+	const filters = fieldNames.reduce((result, field) => {
+		result[field] = params.getAll(field);
+		return result;
+	}, emptyFilters());
+	filters.status = params.getAll("status");
+	filters.budgetMin = params.get("budgetMin") ?? "";
+	filters.budgetMax = params.get("budgetMax") ?? "";
+	filters.publishedAfter = params.get("publishedAfter") ?? "";
+	filters.publishedBefore = params.get("publishedBefore") ?? "";
+	filters.deadlineAfter = params.get("deadlineAfter") ?? "";
+	filters.deadlineBefore = params.get("deadlineBefore") ?? "";
+	return filters;
+}
+
+function formatDeadline(deadline: string | null | undefined): string {
+	return deadline ? new Intl.DateTimeFormat("en-GB", { day: "2-digit", month: "long", year: "numeric" }).format(new Date(deadline)) : "Not specified";
+}
+
+function formatStatus(status: string): string {
+	return status.split("_").map((word) => word[0].toUpperCase() + word.slice(1)).join(" ");
+}
+
+function FilterGroup({ title, field, options, selected, onChange }: { title: string; field: FilterField | "status"; options: string[]; selected: string[]; onChange: (field: FilterField | "status", value: string) => void }) {
 	return (
 		<fieldset className="filter-group">
 			<legend>{title}</legend>
-			{options.map(([label, count, checked]) => (
-				<label key={String(label)} className="filter-option">
-					<input type="checkbox" defaultChecked={Boolean(checked)} />
-					<span>{label}</span>
-					<small>{count}</small>
+			{options.map((option) => (
+				<label key={option} className="filter-option">
+					<input type="checkbox" checked={selected.includes(option)} onChange={() => onChange(field, option)} />
+					<span>{field === "status" ? formatStatus(option) : option}</span>
 				</label>
 			))}
 		</fieldset>
@@ -47,6 +74,111 @@ function FilterGroup({ title, options }: { title: string; options: (string | boo
 }
 
 export default function SearchPage() {
+	const [query, setQuery] = useState("");
+	const [filters, setFilters] = useState<SearchFilters>(emptyFilters);
+	const [appliedQuery, setAppliedQuery] = useState("");
+	const [appliedFilters, setAppliedFilters] = useState<SearchFilters>(emptyFilters);
+	const [sort, setSort] = useState<SortOption>(sortOptions[0]);
+	const [appliedSort, setAppliedSort] = useState<SortOption>(sortOptions[0]);
+	const [availableFilters, setAvailableFilters] = useState<Filters>(emptyFilters);
+	const [documents, setDocuments] = useState<DocumentRecord[]>([]);
+	const [loading, setLoading] = useState(true);
+	const [initialized, setInitialized] = useState(false);
+
+	useEffect(() => {
+		const params = new URLSearchParams(window.location.search);
+		setQuery(params.get("q") ?? "");
+		const initialFilters = readFilters(params);
+		setFilters(initialFilters);
+		setAppliedQuery(params.get("q") ?? "");
+		setAppliedFilters(initialFilters);
+		const initialSort = params.get("sort");
+		if (initialSort && sortOptions.includes(initialSort as SortOption)) {
+			setSort(initialSort as SortOption);
+			setAppliedSort(initialSort as SortOption);
+		}
+		setInitialized(true);
+	}, []);
+
+	useEffect(() => {
+		if (!initialized) return;
+
+		const params = new URLSearchParams();
+		if (appliedQuery.trim()) params.set("q", appliedQuery.trim());
+		params.set("sort", appliedSort);
+		fieldNames.forEach((field) => appliedFilters[field].forEach((value) => params.append(field, value)));
+		appliedFilters.status.forEach((value) => params.append("status", value));
+		(["budgetMin", "budgetMax", "publishedAfter", "publishedBefore", "deadlineAfter", "deadlineBefore"] as const).forEach((field) => {
+			if (appliedFilters[field]) params.set(field, appliedFilters[field]);
+		});
+		setLoading(true);
+		fetch(`${API_BASE_URL}/documents?${params.toString()}`)
+			.then((response) => {
+				if (!response.ok) throw new Error("Unable to load documents");
+				return response.json();
+			})
+			.then((result: { documents: DocumentRecord[]; filters: Filters }) => {
+				setDocuments(result.documents);
+				setAvailableFilters(result.filters);
+			})
+			.catch(() => {
+				setDocuments([]);
+				setAvailableFilters(emptyFilters());
+			})
+			.finally(() => setLoading(false));
+	}, [appliedFilters, appliedQuery, appliedSort, initialized]);
+
+	function applySearch(nextQuery: string, nextFilters: SearchFilters, nextSort = sort) {
+		const params = new URLSearchParams();
+		if (nextQuery.trim()) params.set("q", nextQuery.trim());
+		params.set("sort", nextSort);
+		fieldNames.forEach((field) => nextFilters[field].forEach((value) => params.append(field, value)));
+		nextFilters.status.forEach((value) => params.append("status", value));
+		(["budgetMin", "budgetMax", "publishedAfter", "publishedBefore", "deadlineAfter", "deadlineBefore"] as const).forEach((field) => {
+			if (nextFilters[field]) params.set(field, nextFilters[field]);
+		});
+		window.history.replaceState(null, "", `${window.location.pathname}${params.toString() ? `?${params}` : ""}`);
+		setQuery(nextQuery);
+		setFilters(nextFilters);
+		setAppliedQuery(nextQuery);
+		setAppliedFilters(nextFilters);
+		setSort(nextSort);
+		setAppliedSort(nextSort);
+	}
+
+	function handleSearch(event: FormEvent<HTMLFormElement>) {
+		event.preventDefault();
+		applySearch(query, filters);
+	}
+
+	function toggleFilter(field: FilterField | "status", value: string) {
+		const nextValues = filters[field].includes(value) ? filters[field].filter((item) => item !== value) : [...filters[field], value];
+		setFilters({ ...filters, [field]: nextValues });
+	}
+
+	function clearFilters() {
+		setFilters(emptyFilters());
+		setQuery("");
+	}
+
+	function updateField(field: keyof SearchFilters, value: string) {
+		setFilters({ ...filters, [field]: value });
+	}
+
+	function handleSortChange(nextSort: SortOption) {
+		const params = new URLSearchParams();
+		if (appliedQuery.trim()) params.set("q", appliedQuery.trim());
+		params.set("sort", nextSort);
+		fieldNames.forEach((field) => appliedFilters[field].forEach((value) => params.append(field, value)));
+		appliedFilters.status.forEach((value) => params.append("status", value));
+		(["budgetMin", "budgetMax", "publishedAfter", "publishedBefore", "deadlineAfter", "deadlineBefore"] as const).forEach((field) => {
+			if (appliedFilters[field]) params.set(field, appliedFilters[field]);
+		});
+		window.history.replaceState(null, "", `${window.location.pathname}?${params}`);
+		setSort(nextSort);
+		setAppliedSort(nextSort);
+	}
+
 	return (
 		<div className="search-page">
 			<SiteHeader active="ค้นหา TOR" />
@@ -55,9 +187,9 @@ export default function SearchPage() {
 				<div className="search-hero__inner">
 					<p className="search-kicker">EXPLORE BMA TENDERS</p>
 					<h1>Search Software Terms of Reference (TOR)</h1>
-					<form className="search-bar">
+					<form className="search-bar" onSubmit={handleSearch}>
 						<Search size={17} aria-hidden="true" />
-						<input aria-label="Search tenders" defaultValue="Smart City Software" />
+						<input aria-label="Search tenders" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search titles, agencies, technologies..." />
 						<button className="button button--orange" type="submit">Search Tenders</button>
 					</form>
 				</div>
@@ -65,40 +197,49 @@ export default function SearchPage() {
 
 			<main className="results-layout">
 				<aside className="filters-panel" aria-label="Tender filters">
-					<div className="filters-heading"><strong>Filters</strong><button type="button">Clear All</button></div>
-					{filters.map((filter) => <FilterGroup key={filter.title} {...filter} />)}
+					<div className="filters-heading"><strong>Filters</strong><button type="button" onClick={clearFilters}>Clear All</button></div>
+					<FilterGroup title="Technology Category" field="technology" options={availableFilters.technology} selected={filters.technology} onChange={toggleFilter} />
+					<FilterGroup title="Project Type" field="projectType" options={availableFilters.projectType} selected={filters.projectType} onChange={toggleFilter} />
+					<FilterGroup title="Agency" field="agency" options={availableFilters.agency} selected={filters.agency} onChange={toggleFilter} />
+					<FilterGroup title="Tender Status" field="status" options={["draft_feedback", "open_for_bids", "under_review", "closed"]} selected={filters.status} onChange={toggleFilter} />
 					<fieldset className="filter-group filter-range">
 						<legend>Budget Range</legend>
-						<div><label>Min<input type="number" min="5" max="50" step="1" defaultValue="35" inputMode="numeric" /></label><label>Max<input type="number" min="5" max="50" step="1" defaultValue="35" inputMode="numeric" /></label></div>
+						<div>
+							<label>Min<input type="number" min="0" max="500000000" value={filters.budgetMin} onChange={(event) => updateField("budgetMin", event.target.value)} /></label>
+							<label>Max<input type="number" min="0" max="500000000" value={filters.budgetMax} onChange={(event) => updateField("budgetMax", event.target.value)} /></label>
+						</div>
 					</fieldset>
 					<fieldset className="filter-group filter-dates">
 						<legend>Date Published</legend>
-						<div><label>From<input type="text" placeholder="01/01/2025" /></label><label>To<input type="text" placeholder="14/09/2026" /></label></div>
+						<div>
+							<label>After<input type="date" value={filters.publishedAfter} onChange={(event) => updateField("publishedAfter", event.target.value)} /></label>
+							<label>Before<input type="date" value={filters.publishedBefore} onChange={(event) => updateField("publishedBefore", event.target.value)} /></label>
+						</div>
 					</fieldset>
 					<fieldset className="filter-group filter-dates">
 						<legend>Deadline</legend>
-						<div><label>From<input type="text" placeholder="01/01/2025" /></label><label>To<input type="text" placeholder="14/09/2026" /></label></div>
+						<div>
+							<label>After<input type="date" value={filters.deadlineAfter} onChange={(event) => updateField("deadlineAfter", event.target.value)} /></label>
+							<label>Before<input type="date" value={filters.deadlineBefore} onChange={(event) => updateField("deadlineBefore", event.target.value)} /></label>
+						</div>
 					</fieldset>
-					<button className="button button--orange" type="button" style={{ marginTop: "1rem", width: "100%", fontSize: "0.875rem" }}>Apply</button>
+					<button className="button button--orange filters-apply" type="button" onClick={() => applySearch(query, filters)}>Apply</button>
 				</aside>
 
 				<section className="results-content" aria-labelledby="results-heading">
 					<div className="results-toolbar">
-						<p id="results-heading">Showing <strong>124</strong> software projects matching “Smart City Software”</p>
+						<p id="results-heading">Showing <strong>{loading ? "..." : documents.length}</strong> software projects{appliedQuery ? ` matching “${appliedQuery}”` : ""}</p>
 						<label className="sort-button" htmlFor="sort-select">
 							<SlidersHorizontal size={13} />
 							<span>Sort by:</span>
-							<select id="sort-select" aria-label="Sort results" defaultValue="Highest Match %">
+							<select id="sort-select" aria-label="Sort results" value={sort} onChange={(event) => handleSortChange(event.target.value as SortOption)}>
 								{sortOptions.map((option) => (
 									<option key={option} value={option}>{option}</option>
 								))}
 							</select>
 						</label>
 					</div>
-					<MatchGrid matches={matches} />
-					<nav className="pagination" aria-label="Search results pages">
-						<button type="button">Previous</button><button className="current" type="button">1</button><button type="button">2</button><button type="button">3</button><span>...</span><button type="button">Next</button>
-					</nav>
+					<MatchGrid matches={documents.map((document, index) => ({ icon: icons[index % icons.length], category: document.projectType || document.technology || "Software Project", match: "Project", title: document.projectTitle, agency: document.agency, budget: document.budget || "Not specified", deadline: formatDeadline(document.deadline) }))} />
 				</section>
 			</main>
 

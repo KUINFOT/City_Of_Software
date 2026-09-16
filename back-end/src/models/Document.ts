@@ -10,18 +10,18 @@ const documentSchema = new Schema(
     projectTitle: { type: String, default: '' },
     mimeType: { type: String, required: true },
     size: { type: Number, required: true },
-    status: {
+    // The AI-extraction pipeline's own lifecycle only — the AI-extraction
+    // sweep's work queue is DocumentModel.find({ status: 'uploaded' })
+    // (pipeline/aiExtraction.ts), so this must stay pipeline-only or a
+    // search-filtering-created document would default into it invisibly.
+    status: { type: String, enum: ['uploaded', 'extracted', 'summarized', 'error'], default: 'uploaded' },
+    // The search-filtering feature's own tender-status labels — split out
+    // from `status` (feat/search_filtering, 2026-09-16) so the two features'
+    // enums can evolve independently instead of sharing one combined list.
+    tenderStatus: {
       type: String,
-      // 'draft_feedback' | 'open_for_bids' | 'under_review' are the
-      // search-filtering feature's tender-status labels, distinct from the
-      // pipeline's own uploaded/extracted/summarized/error lifecycle below —
-      // kept as one enum so both features can coexist on one collection.
-      enum: ['uploaded', 'extracted', 'summarized', 'error', 'draft_feedback', 'open_for_bids', 'under_review'],
-      // Default stays 'uploaded': the AI-extraction sweep's work queue is
-      // DocumentModel.find({ status: 'uploaded' }) (pipeline/aiExtraction.ts)
-      // — defaulting elsewhere would make every scraped document invisible
-      // to it.
-      default: 'uploaded',
+      enum: ['draft_feedback', 'open_for_bids', 'under_review', 'closed'],
+      default: 'draft_feedback',
     },
     datePublished: { type: Date, default: null },
     agency: { type: String, default: '' },
