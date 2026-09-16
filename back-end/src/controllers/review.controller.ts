@@ -13,11 +13,11 @@ import { coerceFieldValue } from '../extraction/core/fieldCoercion';
  *  needs to validate against it at the API boundary. */
 const PROCUREMENT_METHODS = ['e_bidding', 'selection', 'special_method', 'specific_method', 'other'] as const;
 
-// TODO: add auth middleware (admin role) once it exists. Until then, every
-// write endpoint below takes `actorId` explicitly in the request body as a
-// stand-in for `req.user.id`, so the audit trail (FR-ADM-06) at least
-// records SOMETHING attributable rather than nothing — but nothing here
-// actually verifies the caller is who they claim to be.
+// requireAdmin (wired in review.routes.ts) confirms the caller is an admin,
+// but every write endpoint below still takes `actorId` explicitly in the
+// request body rather than reading req.authUser.id — the audit trail
+// (FR-ADM-06) records whatever actorId the client sends, not necessarily the
+// authenticated caller. TODO: switch these to req.authUser.id.
 
 /**
  * POST /api/review/tors — US-041: an admin manually creates a TOR with an

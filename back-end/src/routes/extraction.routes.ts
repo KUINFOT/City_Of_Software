@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { requireAdmin } from '../middleware/auth.middleware';
 import {
   listSources,
   triggerRun,
@@ -11,6 +12,7 @@ import {
 
 const router = Router();
 
+router.use(requireAdmin);
 router.get('/sources', listSources);
 router.get('/health', getSourcesHealth);
 router.post('/sources/:id/run', triggerRun);

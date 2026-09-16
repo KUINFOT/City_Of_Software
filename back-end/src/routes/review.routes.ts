@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { upload } from '../middleware/upload';
+import { requireAdmin } from '../middleware/auth.middleware';
 import {
   createManualTor,
   listReviewQueue,
@@ -10,10 +11,9 @@ import {
   supersedeRecord,
 } from '../controllers/review.controller';
 
-// TODO: add auth middleware (admin role) once it exists — see the note at
-// the top of review.controller.ts.
 const router = Router();
 
+router.use(requireAdmin);
 router.post('/tors', upload.single('file'), createManualTor);
 router.get('/queue', listReviewQueue);
 router.get('/queue/:id', getReviewRecord);
