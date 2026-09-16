@@ -15,6 +15,7 @@
 
 import { DocumentModel } from '../../models/Document';
 import { RobotsDisallowedError } from '../core/httpClient';
+import { extractionConfig } from '../core/config';
 import type { Types } from 'mongoose';
 import type { AdapterContext, RawAttachment } from '../types';
 import type { BlobStore } from './storage';
@@ -61,7 +62,25 @@ export async function storeAttachments(
   let stored = 0;
   let skipped = 0;
 
+  // EXTRACTION_MAX_DOCUMENTS: a temporary dev-environment hard ceiling (see
+  // core/config.ts) — 0 means no limit. Checked once per call rather than
+  // per attachment: cheap, and "up to one TOR's worth of attachments over
+  // budget" is an acceptable imprecision for what this exists to do (stop
+  // the collection growing into the hundreds unattended), not something
+  // that needs to be exact to the document.
+  let budgetRemaining = Infinity;
+  if (extractionConfig.maxDocuments > 0) {
+    budgetRemaining = extractionConfig.maxDocuments - (await DocumentModel.countDocuments());
+  }
+
   for (const attachment of attachments) {
+    if (budgetRemaining <= 0) {
+      ctx.logger.warn(
+        `skipped attachment (EXTRACTION_MAX_DOCUMENTS=${extractionConfig.maxDocuments} reached): ${attachment.url}`
+      );
+      skipped += 1;
+      continue;
+    }
     try {
       const res = await ctx.http.getBuffer(attachment.url);
       const filename = attachment.filename ?? 'document.pdf';
@@ -105,6 +124,7 @@ export async function storeAttachments(
 
       documentIds.push(doc._id as Types.ObjectId);
       stored += 1;
+      budgetRemaining -= 1;
     } catch (err) {
       if (err instanceof RobotsDisallowedError) {
         // Not a bug and not a transient failure — the site asked us not to.

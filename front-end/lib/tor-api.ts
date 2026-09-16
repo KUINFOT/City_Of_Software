@@ -21,7 +21,7 @@ export type TorQualifications = {
   minContractValueThb?: number | null;
   requiredCertifications?: string[] | null;
   requiredExperienceYears?: number | null;
-  rawText?: string | null;
+  items?: string[] | null;
 } | null;
 
 export type TorSource = {
@@ -41,11 +41,31 @@ export type TorOutlier = {
   signal: string;
 } | null;
 
+export type TorAgencyContact = { address: string | null; email: string | null; phone: string | null } | null;
+
+/** GET /api/tors's row shape — deliberately thinner than TorDetail, matching
+ *  that endpoint's own `.select()` (see tor.controller.ts's listTors). */
+export type TorSummary = {
+  _id: string;
+  title: string;
+  agencyName: string;
+  // Nested paths Mongoose's .select() projected — each parent key is
+  // dropped from the response entirely (not sent as {}) on any record
+  // where nothing under it was actually set, so every one of these is
+  // genuinely optional, not just its leaf values.
+  budget?: { amountThb: number | null } | null;
+  timeline?: { submissionDeadline: string | null };
+  lifecycle?: { stage: string };
+  createdAt: string;
+};
+
 export type TorDetail = {
   _id: string;
   title: string;
   agencyName: string;
+  agencyContact: TorAgencyContact;
   status: TorStatusValue;
+  projectType: string | null;
   lifecycle: { stage: string; stageLabel?: string | null; isAwarded: boolean | null };
   timeline: Record<string, string | null | undefined>;
   source: TorSource;
@@ -82,6 +102,10 @@ export type QualificationMatchResult = {
   overallStatus: 'all_met' | 'gaps_found' | 'undetermined' | 'no_requirements';
 };
 
+export type MatchReasonType = 'technology' | 'project_type' | 'budget' | 'agency' | 'keyword';
+export type MatchReason = { type: MatchReasonType; label: string; detail: string };
+export type MatchReasonsResult = { score: number; reasons: MatchReason[] };
+
 const apiBaseUrl = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000/api';
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -95,6 +119,13 @@ export function getTor(id: string): Promise<TorDetail> {
   return request(`/tors/${id}`);
 }
 
+/** GET /api/tors — published records only, newest first (BR-03). No
+ *  server-side search/filter yet, so the browse page fetches the max page
+ *  size and filters client-side — fine at today's record counts. */
+export function listTors(limit = 200): Promise<TorSummary[]> {
+  return request(`/tors?limit=${limit}`);
+}
+
 export async function getTorDocuments(id: string): Promise<TorDocument[]> {
   const result = await request<{ documents: TorDocument[] }>(`/tors/${id}/documents`);
   return result.documents;
@@ -102,4 +133,8 @@ export async function getTorDocuments(id: string): Promise<TorDocument[]> {
 
 export function getQualificationMatch(id: string, token: string): Promise<QualificationMatchResult> {
   return request(`/tors/${id}/qualification-match`, { headers: { Authorization: `Bearer ${token}` } });
+}
+
+export function getMatchReasons(id: string, token: string): Promise<MatchReasonsResult> {
+  return request(`/tors/${id}/match-reasons`, { headers: { Authorization: `Bearer ${token}` } });
 }

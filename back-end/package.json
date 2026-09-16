@@ -10,7 +10,8 @@
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
     "extract": "tsx src/extraction/cli.ts",
-    "test": "node --import tsx --test \"src/**/*.test.ts\""
+    "test": "node --import tsx --test \"src/**/*.test.ts\"",
+    "seed": "tsx src/scripts/seedDocuments.ts"
   },
   "engines": {
     "node": ">=18"
@@ -27,7 +28,8 @@
     "morgan": "^1.11.0",
     "multer": "^2.2.0",
     "node-cron": "^3.0.3",
-    "nodemailer": "^10.0.0"
+    "nodemailer": "^10.0.0",
+    "pdf-lib": "^1.17.1"
   },
   "devDependencies": {
     "@types/cors": "^2.8.19",

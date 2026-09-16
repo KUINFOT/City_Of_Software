@@ -1,12 +1,15 @@
 import { Request, Response, NextFunction } from 'express';
 import { TorModel } from '../models/Tor';
 import { DocumentModel } from '../models/Document';
+import { AgencyModel } from '../models/Agency';
 import { VendorProfileModel } from '../models/VendorProfile';
 import { EXTRACTED_FIELD_KEYS, FIELD_TO_TOR_PATH } from '../extraction/core/fieldSchema';
 import { extractionConfig } from '../extraction/core/config';
 import { computeKeyDates } from '../analytics/keyDates';
 import { matchQualifications } from '../matching/qualificationMatch';
+import { computeMatchReasons } from '../matching/matchReasons';
 import { createDocumentAccessToken } from '../services/documentAccess.service';
+import { startOfUtcDay } from '../extraction/core/thaiDate';
 import type { AuthenticatedRequest } from '../middleware/auth.middleware';
 
 /**
@@ -16,14 +19,44 @@ import type { AuthenticatedRequest } from '../middleware/auth.middleware';
  * flag are actually retrievable over HTTP, nothing more.
  */
 
-/** GET /api/tors — published records only, newest first. No filters/sort. */
+/**
+ * GET /api/tors — published records only, newest first. No filters/sort.
+ *
+ * Also excludes anything whose submission deadline has already passed.
+ * `lifecycle.stage` (core/awardStatus.ts) is a keyword classification of the
+ * announcement's TITLE, not the calendar — a listing titled "ประกวดราคา..."
+ * stays classified `bidding_open` forever unless the source republishes a
+ * winner announcement the crawler happens to pick up on a later run, so it
+ * cannot be trusted to reflect whether a vendor can still actually act.
+ * Computed at read time against `timeline.submissionDeadline`, the same
+ * pattern `analytics/keyDates.ts` already uses for the detail page's "days
+ * remaining" — not a stored/cron-maintained status, so it's always correct
+ * for "now" without another scheduled job to keep in sync. A TOR whose
+ * deadline was never successfully extracted (`submissionDeadline` absent) is
+ * kept rather than guessed closed — "absent stays absent" applies here too.
+ *
+ * The cutoff is the START of today (UTC), not the exact current moment —
+ * `core/thaiDate.ts`'s deterministic date parsing stores every date at
+ * midnight UTC (no time-of-day), so comparing against `new Date()` made a
+ * deadline of "today" read as already past the instant any time elapsed
+ * since midnight, hiding a TOR a vendor could very much still act on. A
+ * date-only field needs a date-only cutoff.
+ */
 export async function listTors(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const limit = Math.min(toPositiveInt(req.query.limit) ?? 50, 200);
+    const todayStart = new Date(startOfUtcDay(new Date()));
     // BR-03 enforced again here, not just at approve-time: a bug elsewhere
     // that leaves a record in the wrong status must never leak through the
     // one public read path.
-    const records = await TorModel.find({ status: 'published' })
+    const records = await TorModel.find({
+      status: 'published',
+      $or: [
+        { 'timeline.submissionDeadline': { $exists: false } },
+        { 'timeline.submissionDeadline': null },
+        { 'timeline.submissionDeadline': { $gte: todayStart } },
+      ],
+    })
       .select('title agencyName budget.amountThb timeline.submissionDeadline lifecycle.stage createdAt')
       .sort({ createdAt: -1 })
       .limit(limit);
@@ -54,11 +87,29 @@ export async function getTor(req: Request, res: Response, next: NextFunction): P
       fields[key] = { value: value ?? null, confidence, caution: confidence < extractionConfig.reviewThreshold };
     }
 
+    // "Procuring Department" contact card — real, but sparse: the crawler
+    // never populates Agency.contact today, so most agencies will have none
+    // of these three fields. Each is surfaced only when actually present
+    // rather than defaulted, so the frontend can omit a missing line instead
+    // of showing a placeholder.
+    const agency = await AgencyModel.findById(record.agencyId).select('contact').lean();
+
     res.json({
       _id: record._id,
       title: record.title,
       agencyName: record.agencyName,
+      agencyContact: agency?.contact
+        ? {
+            address: agency.contact.address ?? null,
+            email: agency.contact.email ?? null,
+            phone: agency.contact.phone ?? null,
+          }
+        : null,
       status: record.status,
+      // Not part of the extracted `fields` map below (EXTRACTED_FIELD_KEYS
+      // has no entry for it) — exposed directly since the detail-page hero
+      // badge needs it.
+      projectType: record.projectType ?? null,
       lifecycle: record.lifecycle,
       timeline: record.timeline,
       // US-016/FR-REP-04: "source address ... and import method" — the rest
@@ -71,7 +122,8 @@ export async function getTor(req: Request, res: Response, next: NextFunction): P
       // seven days" has exactly one definition across every consumer.
       keyDates: computeKeyDates(record.timeline, new Date(), extractionConfig.keyDateUrgentWithinDays),
       // US-017: the structured fields a qualification-match check needs.
-      // `fields.qualificationRequirements` above only carries the raw text.
+      // `fields.qualificationRequirements` above only carries the itemized
+      // free-text list, not these structured values.
       qualifications: record.qualifications ?? null,
       // US-018 AC2: every AI-generated summary is labelled machine-generated
       // and non-authoritative — stated on every response, not left implicit.
@@ -167,6 +219,34 @@ export async function getQualificationMatch(req: Request, res: Response, next: N
     const vendorProfile = await VendorProfileModel.findOne({ userId: authUser.id }).lean();
 
     res.json(matchQualifications(tor.qualifications, vendorProfile));
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * GET /api/tors/:id/match-reasons — EP-04 SCRUM-100/101. Live-computed
+ * on-demand for the TOR detail page, mirroring getQualificationMatch's
+ * pattern exactly (published-only guard, vendor-only via requireVendor).
+ * The stored, snapshotted version of these reasons lives on Notification
+ * rows created at stage-transition time (see notifications/dispatch.ts) —
+ * this endpoint answers the same question live, for a TOR that may not have
+ * triggered a notification (e.g. the vendor's profile changed since).
+ */
+export async function getMatchReasons(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const tor = await TorModel.findOne({ _id: req.params.id, status: 'published' })
+      .select('title technologies projectType budget.amountThb agencyId agencyName')
+      .lean();
+    if (!tor) {
+      res.status(404).json({ error: 'TOR not found' });
+      return;
+    }
+
+    const authUser = (req as AuthenticatedRequest).authUser;
+    const vendorProfile = await VendorProfileModel.findOne({ userId: authUser.id }).lean();
+
+    res.json(computeMatchReasons(tor, vendorProfile));
   } catch (err) {
     next(err);
   }

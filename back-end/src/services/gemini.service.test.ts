@@ -1,14 +1,27 @@
-import { describe, it } from 'node:test';
+import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 
+import { gcpConfig } from '../config/gcpConfig';
 import { EXTRACTED_FIELD_KEYS } from '../extraction/core/fieldSchema';
 import { decideRouting } from '../extraction/core/reviewRouting';
 import { extractStructuredFields, summarize } from './gemini.service';
 
-// Same rationale as documentAI.service.test.ts: GCP_PROJECT_ID is unset in
-// this repo's .env, so these exercise the real (and currently only
-// testable) fallback path.
+// Forces the dev-mode fallback path deterministically, regardless of
+// whether the environment running this suite has a real GCP_PROJECT_ID
+// configured (this repo's own .env does, once the pipeline was wired up to
+// real credentials) — restored afterward so it never leaks into another
+// suite. `gcpConfig` is a plain object (its `as const` typing is
+// compile-time only), so mutating this shared instance's property is enough
+// to change what gemini.service.ts itself sees.
 describe('gemini.service — dev-mode fallback (no GCP credentials)', () => {
+  const realProjectId = gcpConfig.projectId;
+  before(() => {
+    (gcpConfig as { projectId: string }).projectId = '';
+  });
+  after(() => {
+    (gcpConfig as { projectId: string }).projectId = realProjectId;
+  });
+
   it('summarize() returns a placeholder rather than throwing', async () => {
     const summary = await summarize('some document text');
     assert.ok(summary.includes('[stub]'));

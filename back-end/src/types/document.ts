@@ -1,4 +1,7 @@
-export type DocumentStatus = 'uploaded' | 'extracted' | 'summarized' | 'error';
+export interface DocumentMetadata {
+  pageCount: number;
+  confidence: number;
+}
 
 /**
  * Result returned by the Document AI extraction service.

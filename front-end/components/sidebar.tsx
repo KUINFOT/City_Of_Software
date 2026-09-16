@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Activity, Bell, Bookmark, Bot, CircleUserRound, Gauge, HardDriveDownload, History, KeyRound, RadioTower, ShieldCheck } from "lucide-react";
+import { Activity, Bell, Bookmark, Bot, CircleUserRound, ClipboardCheck, Gauge, HardDriveDownload, History, KeyRound, RadioTower, ShieldCheck } from "lucide-react";
 import { Brand } from "./brand";
 import { useAuth } from "./auth-provider";
 
@@ -19,7 +19,7 @@ export function Sidebar() {
   const pathname = usePathname();
   const { user } = useAuth();
   const visibleItems = user?.role === "admin"
-    ? [...items, { label: "ติดตามหน่วยงาน", href: "/admin/agency-monitor", icon: RadioTower }, { label: "สถานะตัวเชื่อมต่อ", href: "/admin/adapter-health", icon: Activity }, { label: "บัญชีและบทบาท", href: "/admin/accounts", icon: ShieldCheck }, { label: "ประวัติการตรวจสอบ", href: "/admin/audit-log", icon: History }, { label: "ส่งออกข้อมูล", href: "/admin/export-repository", icon: HardDriveDownload }]
+    ? [...items, { label: "คิวตรวจสอบ", href: "/admin/review", icon: ClipboardCheck }, { label: "ติดตามหน่วยงาน", href: "/admin/agency-monitor", icon: RadioTower }, { label: "สถานะตัวเชื่อมต่อ", href: "/admin/adapter-health", icon: Activity }, { label: "บัญชีและบทบาท", href: "/admin/accounts", icon: ShieldCheck }, { label: "ประวัติการตรวจสอบ", href: "/admin/audit-log", icon: History }, { label: "ส่งออกข้อมูล", href: "/admin/export-repository", icon: HardDriveDownload }]
     : items;
 
   return (

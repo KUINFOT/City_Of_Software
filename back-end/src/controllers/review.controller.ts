@@ -13,11 +13,11 @@ import { coerceFieldValue } from '../extraction/core/fieldCoercion';
  *  needs to validate against it at the API boundary. */
 const PROCUREMENT_METHODS = ['e_bidding', 'selection', 'special_method', 'specific_method', 'other'] as const;
 
-// TODO: add auth middleware (admin role) once it exists. Until then, every
-// write endpoint below takes `actorId` explicitly in the request body as a
-// stand-in for `req.user.id`, so the audit trail (FR-ADM-06) at least
-// records SOMETHING attributable rather than nothing — but nothing here
-// actually verifies the caller is who they claim to be.
+// requireAdmin (wired in review.routes.ts) confirms the caller is an admin,
+// but every write endpoint below still takes `actorId` explicitly in the
+// request body rather than reading req.authUser.id — the audit trail
+// (FR-ADM-06) records whatever actorId the client sends, not necessarily the
+// authenticated caller. TODO: switch these to req.authUser.id.
 
 /**
  * POST /api/review/tors — US-041: an admin manually creates a TOR with an
@@ -167,7 +167,18 @@ export async function listReviewQueue(req: Request, res: Response, next: NextFun
   }
 }
 
-/** GET /api/review/queue/:id — full record for the review editor. */
+/**
+ * GET /api/review/queue/:id — full record for the review editor.
+ *
+ * `documents` is resolved from real `Document` rows, not just echoed back
+ * from `record.documentIds` — a TOR's `documentIds` array can outlive the
+ * Document rows it points to (e.g. one was deleted or reset elsewhere), and
+ * handing back a dead id would build a link that always 404s. Mirrors
+ * `listTorDocuments`'s own `DocumentModel.find({ _id: { $in: ... } })`
+ * pattern for the same reason, minus that endpoint's published-only gate
+ * and signed token — this is the admin correction flow, already reachable
+ * unauthenticated (see getDocumentFile's own comment on why).
+ */
 export async function getReviewRecord(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const record = await TorModel.findById(req.params.id).lean();
@@ -175,6 +186,11 @@ export async function getReviewRecord(req: Request, res: Response, next: NextFun
       res.status(404).json({ error: 'Record not found' });
       return;
     }
+
+    const docs = await DocumentModel.find({ _id: { $in: record.documentIds ?? [] } })
+      .select('originalName mimeType size origin')
+      .lean();
+
     // Built as a loosely-typed response object on purpose: Mongoose Maps
     // don't serialise to JSON as plain objects on their own, and re-typing
     // the whole lean() result just to override one field isn't worth it.
@@ -185,6 +201,11 @@ export async function getReviewRecord(req: Request, res: Response, next: NextFun
         fieldConfidence: mapToObject(record.extraction.fieldConfidence),
       };
     }
+    response.documents = docs.map((doc) => ({
+      _id: doc._id,
+      originalName: doc.originalName,
+      fileUrl: doc.origin?.storageKey ? `/documents/${doc._id}/file` : null,
+    }));
     res.json(response);
   } catch (err) {
     next(err);

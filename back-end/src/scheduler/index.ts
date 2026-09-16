@@ -12,6 +12,7 @@ import cron, { type ScheduledTask } from 'node-cron';
 import { runSource } from '../extraction/pipeline/runner';
 import { runExtractionSweep } from '../extraction/pipeline/aiExtraction';
 import { runOutlierAnalysis } from '../analytics/procurementStats';
+import { runDigestDispatch } from '../notifications/digest';
 import { schedulableSources } from '../extraction/registry';
 import { createLogger } from '../extraction/core/logger';
 import { cronConfig, validateCronConfig } from './cronConfig';
@@ -81,6 +82,13 @@ export function startScheduler(): void {
     })
   );
   logger.info(`registered outlier analysis on schedule "${cronConfig.analytics}"`);
+
+  tasks.push(
+    cron.schedule(cronConfig.digest, () => {
+      void withLock('notifications:digest', () => runDigestDispatch(logger).then(() => undefined), logger);
+    })
+  );
+  logger.info(`registered daily-digest dispatch on schedule "${cronConfig.digest}"`);
 
   logger.info(`scheduler started — ${tasks.length} job(s) registered`);
 }

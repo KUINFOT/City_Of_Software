@@ -1,19 +1,52 @@
 "use client";
 
-import { Bell, Bookmark, Clock3, FileText, MapPin, School, Sparkles, Video } from "lucide-react";
+import Link from "next/link";
+import { useEffect, useState } from "react";
+import { Bell, Clock3, FileText, Sparkles } from "lucide-react";
 import { AccountShell } from "@/components/account-shell";
 import { AccountMenu } from "@/components/account-menu";
 import { useAuth } from "@/components/auth-provider";
+import { getNotifications, VendorNotification } from "@/lib/notifications-api";
+import { getVendorProfile, ProfileCompleteness } from "@/lib/vendor-profile";
 
-const matches = [
-  { icon: Video, category: "AI วิเคราะห์วิดีโอ", match: "ตรงกัน 96%", title: "ระบบวิเคราะห์ภาพ CCTV ด้วยแมชชีนวิชันสำหรับสำนักงานเขต", agency: "สำนักงานเขตสาทรและปทุมวัน", budget: "฿ 8,500,000", deadline: "15 เมษายน 2569" },
-  { icon: School, category: "E-Learning และ LMS", match: "ตรงกัน 92%", title: "แพลตฟอร์มการเรียนรู้ดิจิทัลสำหรับโรงเรียน กทม.", agency: "สำนักการศึกษา กรุงเทพมหานคร", budget: "฿ 4,900,000", deadline: "20 เมษายน 2569" },
-  { icon: MapPin, category: "GIS และแผนที่", match: "ตรงกัน 85%", title: "ปรับปรุงฐานข้อมูล GIS ภาครัฐแบบเปิดของ กทม.", agency: "สำนักการวางผังและพัฒนาเมือง กรุงเทพมหานคร", budget: "฿ 6,200,000", deadline: "5 พฤษภาคม 2569" },
-];
+const STAGE_LABEL: Record<string, string> = {
+  comment_stage: "ช่วงรับฟังความคิดเห็น",
+  announcement_stage: "ประกาศอย่างเป็นทางการ",
+};
+
+function formatThb(value: number | null) {
+  return value == null ? "ไม่ระบุ" : `฿ ${new Intl.NumberFormat("th-TH").format(value)}`;
+}
+
+function formatDeadline(value: string | null) {
+  return value ? new Date(value).toLocaleDateString("th-TH", { year: "numeric", month: "long", day: "numeric" }) : "ไม่ระบุ";
+}
 
 export default function DashboardPage() {
-  const { user } = useAuth();
+  const { user, token } = useAuth();
   const firstName = user?.name.split(" ")[0] ?? "คุณ";
+
+  const [matches, setMatches] = useState<VendorNotification[]>([]);
+  const [matchesLoading, setMatchesLoading] = useState(true);
+  const [completeness, setCompleteness] = useState<ProfileCompleteness | null>(null);
+
+  useEffect(() => {
+    if (!token || user?.role !== "vendor") {
+      setMatchesLoading(false);
+      return;
+    }
+    let cancelled = false;
+    getNotifications(token)
+      .then((result) => { if (!cancelled) setMatches(result); })
+      .catch(() => { if (!cancelled) setMatches([]); })
+      .finally(() => { if (!cancelled) setMatchesLoading(false); });
+    return () => { cancelled = true; };
+  }, [token, user?.role]);
+
+  useEffect(() => {
+    if (!user?.id || !token || user.role !== "vendor") return;
+    getVendorProfile(user.id, token).then((result) => setCompleteness(result.completeness)).catch(() => setCompleteness(null));
+  }, [token, user?.id, user?.role]);
 
   return (
     <AccountShell>
@@ -28,18 +61,34 @@ export default function DashboardPage() {
         <article><small>การค้นหาที่บันทึกไว้</small><strong className="green">การแจ้งเตือน 4 รายการ</strong><p>น้ำท่วม ระบบระบายน้ำ ควบคุมจราจร</p></article>
       </section>
 
+      {user?.role === "vendor" && completeness && completeness.missingFields.length > 0 && <section className="dashboard-completeness-prompt" aria-label="ข้อมูลโปรไฟล์ที่ยังขาด">
+        <div><p>โปรไฟล์คุณครบ {completeness.score}%</p><h2>เพิ่มข้อมูลอีก {completeness.missingFields.length} รายการ เพื่อรับการจับคู่ที่ตรงขึ้น</h2><span>ยังขาด: {completeness.missingFields.map((field) => ({ organizationType: "ประเภทองค์กร", companyName: "ชื่อบริษัท", techStack: "เทคโนโลยี", serviceCategories: "หมวดหมู่บริการ", yearsExperience: "ประสบการณ์", certifications: "ใบรับรอง", pastContracts: "ผลงานที่ผ่านมา" })[field.key]).join(" · ")}</span></div>
+        <Link className="button button--primary" href="/settings#profile">เติมข้อมูลโปรไฟล์</Link>
+      </section>}
+
       <section className="dashboard-section" id="recommendations">
         <div className="section-title"><div><h2>TOR ที่ AI แนะนำตามโปรไฟล์</h2><span>รายการใหม่</span></div><a href="/settings#notifications">ตั้งค่าความสนใจ</a></div>
-        <div className="match-grid">
-          {matches.map(({ icon: Icon, ...match }) => (
-            <article className="match-card" key={match.title}>
-              <div className="match-card__top"><span><Icon size={14} />{match.category}</span><strong><Sparkles size={14} />{match.match}</strong></div>
-              <h3>{match.title}</h3><p>{match.agency}</p>
-              <div className="card-meta"><div><small>งบประมาณโดยประมาณ</small><strong>{match.budget}</strong></div><div><small>กำหนดส่ง</small><strong>{match.deadline}</strong></div></div>
-              <div className="card-actions"><button>ดูสรุปจาก AI</button><button aria-label="บันทึกโครงการ"><Bookmark size={16} /></button></div>
-            </article>
-          ))}
-        </div>
+        {user?.role !== "vendor" ? (
+          <p className="key-dates-empty">การแนะนำโครงการใช้ได้เฉพาะบัญชีผู้ขาย</p>
+        ) : matchesLoading ? (
+          <p className="key-dates-empty">กำลังโหลดโครงการที่ตรงกับโปรไฟล์...</p>
+        ) : matches.length === 0 ? (
+          <p className="key-dates-empty">ยังไม่มีโครงการที่ตรงกับโปรไฟล์ของคุณ — ลองปรับความสนใจในหน้าตั้งค่า</p>
+        ) : (
+          <div className="match-grid">
+            {matches.map((match) => (
+              <article className="match-card" key={match._id}>
+                <div className="match-card__top">
+                  <span><Sparkles size={14} />{STAGE_LABEL[match.type] ?? match.type}</span>
+                  {match.reasons[0] && <strong><Sparkles size={14} />{match.reasons[0].label}</strong>}
+                </div>
+                <h3>{match.torTitle}</h3><p>{match.agencyName}</p>
+                <div className="card-meta"><div><small>งบประมาณโดยประมาณ</small><strong>{formatThb(match.budgetThb)}</strong></div><div><small>กำหนดส่ง</small><strong>{formatDeadline(match.submissionDeadline)}</strong></div></div>
+                <div className="card-actions"><a className="button button--small" href={`/tors/${match.torId}`}>ดูรายละเอียด</a></div>
+              </article>
+            ))}
+          </div>
+        )}
       </section>
 
       <section className="bottom-grid">

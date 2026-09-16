@@ -34,6 +34,33 @@ export const EXTRACTED_FIELD_KEYS = [
 export type ExtractedFieldKey = (typeof EXTRACTED_FIELD_KEYS)[number];
 
 /**
+ * Fields nearly every real procurement document establishes regardless of
+ * type or method — what's being procured, who's procuring it, how, roughly
+ * how much, and when bids are due. This is the coverage denominator
+ * `core/confidenceScoring.ts`'s `computeOverallConfidence` uses instead of
+ * every `EXTRACTED_FIELD_KEYS` entry.
+ *
+ * The other ten fields are legitimately absent from a large share of real
+ * documents — not a sign of bad extraction, just normal variation by
+ * procurement type — and scoring coverage against all sixteen punished that
+ * as if it were a failure. Live-audited 2026-09-16 across every TOR
+ * processed that day: `evaluationCriteria` alone was "not found" 94% of the
+ * time, `keyRisks` 100% of the time, yet the documents that were missing
+ * them were read correctly — those sections just weren't in them. A field
+ * outside this list still contributes to the confidence AVERAGE when the
+ * model does find and ground it; it just no longer costs anything in the
+ * coverage term when it's genuinely not there.
+ */
+export const CORE_FIELD_KEYS = [
+  'title',
+  'agency',
+  'procurementMethod',
+  'description',
+  'budget',
+  'timelineSubmissionDeadline',
+] as const satisfies readonly ExtractedFieldKey[];
+
+/**
  * Bump on any change to the prompt, model choice, or the key list above.
  * Semantic-ish versioning is a convention here, not an enforced contract.
  */
@@ -57,16 +84,31 @@ export interface FieldExtraction<T = unknown> {
 
 export interface StructuredExtractionResult {
   fields: Record<ExtractedFieldKey, FieldExtraction>;
-  /** FR-EXT-03's standardised natural-language summary. */
+  /** FR-EXT-03's standardised natural-language summary. Empty when it
+   *  failed the same grounding check every structured field gets — see
+   *  gemini.service.ts's groundAndScore. */
   summary: string;
+  /** The model's own confidence in `summary`, zeroed out by groundAndScore
+   *  when the summary doesn't ground — mirrors a FieldExtraction's
+   *  `confidence`, just without a matching value/evidence pair since a
+   *  free-text summary isn't a single field. */
+  summaryConfidence: number;
   /** FR-EXT-04 — the document's dominant language, as actually observed. */
   language: 'th' | 'en' | 'mixed';
   /** Recomputed by the caller from kept-field confidence; never trusted
    *  verbatim from the model — see gemini.service.ts. */
   overallConfidence: number;
   /** Field keys the model returned but which failed grounding and were
-   *  discarded (FR-EXT-09). */
+   *  discarded (FR-EXT-09). Includes the literal string `'summary'` when
+   *  the free-text summary itself was discarded for the same reason. */
   discardedFields: string[];
+  /** Only set by extractFromDocument's multimodal path: the model's own
+   *  transcription of the document it read directly, which every field's
+   *  evidence is grounded against instead of a separate OCR pass — see
+   *  that function's doc comment for why. Undefined for the OCR-text path,
+   *  where the caller already has its own source text (Document.extractedText
+   *  keeps whichever of the two actually produced this result). */
+  transcription?: string;
 }
 
 /**
@@ -90,7 +132,7 @@ export const FIELD_TO_TOR_PATH: Record<ExtractedFieldKey, string> = {
   timelineClarificationMeeting: 'timeline.clarificationMeetingDate',
   timelineSubmissionDeadline: 'timeline.submissionDeadline',
   timelineAnnouncement: 'timeline.announcementDate',
-  qualificationRequirements: 'qualifications.rawText',
+  qualificationRequirements: 'qualifications.items',
   evaluationCriteria: 'evaluationCriteria',
   budget: 'budget.amountThb',
   keyRisks: 'keyRisks',
@@ -102,5 +144,5 @@ export function emptyExtraction(summary: string, language: StructuredExtractionR
   const fields = Object.fromEntries(
     EXTRACTED_FIELD_KEYS.map((key) => [key, { value: null, confidence: 0, evidence: null }])
   ) as Record<ExtractedFieldKey, FieldExtraction>;
-  return { fields, summary, language, overallConfidence: 0, discardedFields: [] };
+  return { fields, summary, summaryConfidence: 0, language, overallConfidence: 0, discardedFields: [] };
 }

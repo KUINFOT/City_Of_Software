@@ -11,6 +11,8 @@ const userSchema = new Schema(
     emailVerified: { type: Boolean, default: false },
     status: { type: String, enum: ['pending_verification', 'active', 'suspended'], default: 'pending_verification' },
     sessionVersion: { type: Number, default: 0 },
+    failedLoginAttempts: { type: Number, default: 0 },
+    loginLockedUntil: { type: Date, default: null },
     lastLoginAt: Date,
   },
   { timestamps: true }

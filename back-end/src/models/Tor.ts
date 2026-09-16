@@ -146,7 +146,11 @@ const torSchema = new Schema(
       minContractValueThb: Number,
       requiredCertifications: [String],
       requiredExperienceYears: Number,
-      rawText: String,
+      // One entry per distinct bidder-qualification requirement (mirrors the
+      // source document's own itemization — e.g. numbered clauses 3.1, 3.2,
+      // ...), not a single paraphrased paragraph — see gemini.service.ts's
+      // prompt instruction for why.
+      items: [String],
     },
 
     evaluationCriteria: [evaluationCriterionSchema],

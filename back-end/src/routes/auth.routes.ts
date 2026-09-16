@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { login, register, resendVerification, verifyEmail, requestPasswordReset, resetPassword, completeVendorOnboarding } from '../controllers/auth.controller';
+import { login, logout, register, resendVerification, verifyEmail, requestPasswordReset, resetPassword, completeVendorOnboarding } from '../controllers/auth.controller';
 import { env } from '../config/env';
 
 const router = Router();
@@ -16,6 +16,11 @@ router.post('/complete-vendor-onboarding', (req, res) => {
 });
 router.post('/login', (req, res) => {
   login(req, res).catch(() => {
+    res.status(503).json({ error: 'Authentication service is temporarily unavailable. Please try again later.' });
+  });
+});
+router.post('/logout', (req, res) => {
+  logout(req, res).catch(() => {
     res.status(503).json({ error: 'Authentication service is temporarily unavailable. Please try again later.' });
   });
 });

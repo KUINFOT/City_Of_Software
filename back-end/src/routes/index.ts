@@ -7,6 +7,8 @@ import torRoutes from './tor.routes';
 import auditLogRoutes from './auditLog.routes';
 import vendorProfileRoutes from './vendorProfile.routes';
 import adminUsersRoutes from './adminUsers.routes';
+import notificationRoutes from './notification.routes';
+import agencyRoutes from './agency.routes';
 
 const router = Router();
 
@@ -22,5 +24,7 @@ router.use('/tors', torRoutes);
 router.use('/audit-log', auditLogRoutes);
 router.use('/vendor-profiles', vendorProfileRoutes);
 router.use('/admin', adminUsersRoutes);
+router.use('/notifications', notificationRoutes);
+router.use('/agencies', agencyRoutes);
 
 export default router;

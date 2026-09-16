@@ -42,7 +42,7 @@ export default function AccountManagementPage() {
   useEffect(() => { loadUsers(); }, [token]);
 
   async function saveUser(id: string, changes: Partial<Pick<ManagedUser, "role" | "status">>) {
-    if (!token) { signOut(); return; }
+    if (!token) { void signOut(); return; }
     setUpdatingId(id); setError("");
     try {
       const { user } = await updateManagedUser(token, id, changes);

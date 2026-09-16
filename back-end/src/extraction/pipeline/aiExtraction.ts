@@ -13,14 +13,25 @@
  */
 
 import { Types } from 'mongoose';
+import { PDFDocument } from 'pdf-lib';
 import { DocumentModel } from '../../models/Document';
 import { ExtractionJobModel } from '../../models/ExtractionJob';
 import { TorModel } from '../../models/Tor';
 import { extractText } from '../../services/documentAI.service';
-import { extractStructuredFields } from '../../services/gemini.service';
-import { EXTRACTION_PROMPT_VERSION, type ExtractedFieldKey, type FieldExtraction } from '../core/fieldSchema';
+import { canReadDirectly, extractFromDocument, extractStructuredFields } from '../../services/gemini.service';
+import {
+  EXTRACTED_FIELD_KEYS,
+  EXTRACTION_PROMPT_VERSION,
+  type ExtractedFieldKey,
+  type FieldExtraction,
+  type StructuredExtractionResult,
+} from '../core/fieldSchema';
 import { asComplexity, asDate, asNumber, asString, asStringArray } from '../core/fieldCoercion';
-import { decideRouting } from '../core/reviewRouting';
+import { decideRouting, type RoutingDecision } from '../core/reviewRouting';
+import { computeOverallConfidence } from '../core/confidenceScoring';
+import { parseThaiDate } from '../core/thaiDate';
+import { classify } from '../core/awardStatus';
+import type { AwardStage, StageVerdict } from '../types';
 import { extractionConfig } from '../core/config';
 import { gcpConfig } from '../../config/gcpConfig';
 import { createLogger, type Logger } from '../core/logger';
@@ -59,9 +70,28 @@ export async function runExtractionSweep(
 
   result.doclessRouted = await routeDoclessTors(logger);
 
+  // EXTRACTION_MAX_DOCUMENTS: a temporary dev-environment hard ceiling (see
+  // core/config.ts) — 0 means no limit. Independent of the crawler's own
+  // cap in pipeline/attachments.ts: this one bounds the SWEEP specifically,
+  // so a backlog that already existed before the cap was set (or one that
+  // built up from a source outside this app's control) still can't make an
+  // unbounded number of AI-extraction calls.
+  let effectiveBatchSize = batchSize;
+  if (extractionConfig.maxDocuments > 0) {
+    const alreadyProcessed = await DocumentModel.countDocuments({ status: { $ne: 'uploaded' } });
+    const budgetRemaining = Math.max(0, extractionConfig.maxDocuments - alreadyProcessed);
+    if (budgetRemaining === 0) {
+      logger.warn(
+        `extraction sweep skipped — EXTRACTION_MAX_DOCUMENTS=${extractionConfig.maxDocuments} already reached ` +
+          `(${alreadyProcessed} documents already processed)`
+      );
+    }
+    effectiveBatchSize = Math.min(batchSize, budgetRemaining);
+  }
+
   const documents = await DocumentModel.find({ status: 'uploaded' })
     .sort({ createdAt: 1 })
-    .limit(batchSize);
+    .limit(effectiveBatchSize);
 
   for (const document of documents) {
     if ((document.extraction?.attempts ?? 0) >= extractionConfig.maxAttempts) {
@@ -149,11 +179,50 @@ async function processDocument(document: DocumentLike, store: BlobStore, logger:
 
   const started = Date.now();
   const buffer = await store.get(document.origin.storageKey);
-  const ocr = await extractText(buffer, document.mimeType);
-  const structured = await extractStructuredFields(ocr.text, {});
+  const rawDocument = { buffer, mimeType: document.mimeType };
+
+  // PRIMARY path: Gemini reads the raw document directly whenever it's a
+  // type/size it can (see canReadDirectly). Document AI is skipped
+  // entirely here — not just for grounding — because it was found
+  // (2026-09-15) to reliably produce corrupted text for this project's
+  // real documents (see extractFromDocument's own doc comment), so there's
+  // nothing useful left for it to contribute, and skipping it saves a real
+  // API call. Falls back to the OCR-text path only for what Gemini can't
+  // read directly (docx/xlsx, or an oversized file).
+  let structured: StructuredExtractionResult;
+  let extractedText: string;
+  let pageCount: number;
+  let ocrUsed: boolean;
+  let ocrConfidence: number;
+
+  if (canReadDirectly(rawDocument)) {
+    structured = await extractFromDocument(rawDocument, {});
+    extractedText = structured.transcription ?? '';
+    pageCount = await countPagesLocally(buffer, document.mimeType);
+    ocrUsed = false;
+    ocrConfidence = 0;
+  } else {
+    const ocr = await extractText(buffer, document.mimeType);
+    structured = await extractStructuredFields(ocr.text, {});
+    extractedText = ocr.text;
+    pageCount = ocr.pageCount;
+    ocrUsed = ocr.ocrUsed;
+    ocrConfidence = ocr.confidence;
+  }
   const processingTimeMs = Date.now() - started;
 
-  const routing = decideRouting(structured.overallConfidence, extractionConfig);
+  // Cross-check the scrape-time title-keyword stage against what the AI
+  // actually read — see StageSignal's `ai_content` doc comment (types.ts)
+  // for the live case (two ITD listings both titled generically, whose real
+  // attached documents were post-award winner disclosures) this exists to
+  // catch. Only ever escalates toward awarded/cancelled, never reverses an
+  // existing verdict — see rollUpForTor.
+  const contentVerdict = classify(extractedText, 'ai_content');
+
+  // A TOR's documents are swept independently, often minutes or days apart,
+  // so routing has to reflect what the TOR knows ACROSS all of them — not
+  // just whatever this one document happened to find. See rollUpForTor.
+  const rollup = await rollUpForTor(document.torId, structured, contentVerdict);
 
   const job = await ExtractionJobModel.create({
     documentId: document._id,
@@ -162,27 +231,29 @@ async function processDocument(document: DocumentLike, store: BlobStore, logger:
     finishedAt: new Date(),
     modelVersion: extractModelVersionLabel(),
     promptVersion: EXTRACTION_PROMPT_VERSION,
-    ocrUsed: ocr.ocrUsed,
+    ocrUsed,
     language: structured.language,
+    // This job's own isolated confidence — an honest record of what THIS
+    // attempt found, distinct from the TOR-level rollup below.
     overallConfidence: structured.overallConfidence,
     fieldConfidence: fieldConfidenceMap(structured.fields),
     discardedFields: structured.discardedFields.map((field) => ({ field, reason: 'not grounded in source text' })),
     processingTimeMs,
     estimatedCostThb: extractionConfig.estCostPerDocThb,
-    routedTo: routing,
+    routedTo: rollup.routing,
   });
 
-  await applyExtractionToTor(document.torId, structured, routing, document._id as Types.ObjectId, job._id as Types.ObjectId);
+  await applyExtractionToTor(document.torId, structured, rollup, document._id as Types.ObjectId);
 
   await DocumentModel.updateOne(
     { _id: document._id },
     {
       $set: {
         status: 'extracted',
-        extractedText: ocr.text,
+        extractedText,
         summary: structured.summary,
-        'metadata.pageCount': ocr.pageCount,
-        'metadata.confidence': ocr.confidence,
+        'metadata.pageCount': pageCount,
+        'metadata.confidence': ocrConfidence,
         'extraction.lastAttemptAt': new Date(),
       },
       $inc: { 'extraction.attempts': 1 },
@@ -190,10 +261,12 @@ async function processDocument(document: DocumentLike, store: BlobStore, logger:
   );
 
   logger.info(
-    `extracted document ${document._id} -> Tor ${document.torId}: confidence ${structured.overallConfidence.toFixed(2)}, routed ${routing}`
+    `extracted document ${document._id} -> Tor ${document.torId}: this document's confidence ` +
+      `${structured.overallConfidence.toFixed(2)}, TOR's combined confidence ${rollup.overallConfidence.toFixed(2)}, ` +
+      `routed ${rollup.routing}`
   );
 
-  return routing;
+  return rollup.routing;
 }
 
 function extractModelVersionLabel(): string {
@@ -205,6 +278,16 @@ function extractModelVersionLabel(): string {
   return gcpConfig.vertexModel;
 }
 
+/** Page count for the multimodal path, which never calls Document AI (the
+ *  usual source of this number) — cheap and local rather than paying for an
+ *  API call just to learn a page count. Only PDFs have a real notion of
+ *  "pages" among the multimodal-capable types; every image is one page. */
+async function countPagesLocally(buffer: Buffer, mimeType: string): Promise<number> {
+  if (mimeType !== 'application/pdf') return 1;
+  const pdf = await PDFDocument.load(buffer, { ignoreEncryption: true });
+  return pdf.getPageCount();
+}
+
 function fieldConfidenceMap(fields: Record<ExtractedFieldKey, FieldExtraction>): Map<string, number> {
   const map = new Map<string, number>();
   for (const [key, field] of Object.entries(fields) as Array<[ExtractedFieldKey, FieldExtraction]>) {
@@ -213,13 +296,113 @@ function fieldConfidenceMap(fields: Record<ExtractedFieldKey, FieldExtraction>):
   return map;
 }
 
+/** `.lean()` may hand back a Map or a plain object for a Map-typed path,
+ *  depending on driver version — accept either (mirrors tor.controller.ts's
+ *  own mapGet, reading the same field for the same reason). */
+function mapGet(value: unknown, key: string): number {
+  if (value instanceof Map) return value.get(key) ?? 0;
+  if (value && typeof value === 'object') return (value as Record<string, number>)[key] ?? 0;
+  return 0;
+}
+
+export interface TorRollup {
+  /** Per field: the higher of what the TOR already had and what this
+   *  document just found — never lower than either. */
+  fieldConfidence: Map<ExtractedFieldKey, number>;
+  overallConfidence: number;
+  routing: RoutingDecision;
+  correctedFields: Set<string>;
+  /** Whether THIS document's summary is the one that should end up on the
+   *  Tor — true only when it's grounded (confidence > 0) and at least ties
+   *  the Tor's existing summary. An ungrounded summary never wins, even
+   *  against a TOR with no summary yet, so a bad summary simply leaves the
+   *  Tor without one rather than publishing a hallucination. */
+  summaryWins: boolean;
+  /** Set only when the AI's own read of the document content found an
+   *  award/cancellation the scrape-time title-keyword stage missed — see
+   *  StageSignal's `ai_content` doc comment (types.ts). `null` when there's
+   *  nothing to correct (the existing stage already agrees, or the content
+   *  verdict found no award signal at all). applyExtractionToTor writes
+   *  these fields onto the Tor's `lifecycle` when present. */
+  lifecycleOverride: { stage: AwardStage; stageLabel: string; isAwarded: boolean; signal: 'ai_content' } | null;
+}
+
+/**
+ * Rolls one document's extraction into the TOR's ACCUMULATED per-field
+ * confidence, rather than letting whichever document the sweep happens to
+ * process last silently overwrite what an earlier, better document already
+ * established — a document with no budget section shouldn't be able to
+ * erase a budget an earlier document grounded well just by running later.
+ *
+ * `overallConfidence` — and therefore the publish/review routing decision —
+ * is recomputed from this MERGED map using the same formula as
+ * gemini.service.ts's groundAndScore, so a TOR whose several attachments
+ * together cover the full field set is judged on that combined picture, not
+ * on whichever single document the sweep happened to process most recently.
+ */
+async function rollUpForTor(
+  torId: Types.ObjectId,
+  structured: StructuredExtractionResult,
+  contentVerdict: StageVerdict
+): Promise<TorRollup> {
+  const tor = await TorModel.findById(torId)
+    .select('extraction.humanCorrectedFields extraction.fieldConfidence summaryAi.confidence lifecycle.isAwarded')
+    .lean();
+
+  const correctedFields = new Set<string>(tor?.extraction?.humanCorrectedFields ?? []);
+  const priorFieldConfidence = tor?.extraction?.fieldConfidence;
+
+  const fieldConfidence = new Map<ExtractedFieldKey, number>();
+  for (const key of EXTRACTED_FIELD_KEYS) {
+    fieldConfidence.set(key, Math.max(mapGet(priorFieldConfidence, key), structured.fields[key].confidence));
+  }
+
+  const overallConfidence = computeOverallConfidence((key) => fieldConfidence.get(key)!, EXTRACTED_FIELD_KEYS);
+
+  const priorSummaryConfidence = tor?.summaryAi?.confidence ?? 0;
+  const summaryWins = structured.summaryConfidence > 0 && structured.summaryConfidence >= priorSummaryConfidence;
+
+  // Escalate-only: a content verdict of awarded/cancelled overrides a stage
+  // that doesn't already say so; anything else about the content verdict
+  // (a pre-award stage, or 'other') never overwrites what the scrape-time
+  // title already established, since a title correctly reading "ผู้ชนะ" is
+  // already reliable and the AI's read of a long document is noisier than a
+  // keyword match on its own short title.
+  const currentIsAwarded = tor?.lifecycle?.isAwarded ?? null;
+  const contentFoundAward = contentVerdict.stage === 'awarded' || contentVerdict.stage === 'cancelled';
+  const lifecycleOverride =
+    contentFoundAward && currentIsAwarded !== true
+      ? {
+          stage: contentVerdict.stage,
+          stageLabel: contentVerdict.stageLabel,
+          isAwarded: contentVerdict.isAwarded ?? true,
+          signal: 'ai_content' as const,
+        }
+      : null;
+  const effectiveIsAwarded = lifecycleOverride?.isAwarded ?? currentIsAwarded;
+
+  return {
+    fieldConfidence,
+    overallConfidence,
+    routing: decideRouting(overallConfidence, extractionConfig, effectiveIsAwarded),
+    correctedFields,
+    summaryWins,
+    lifecycleOverride,
+  };
+}
+
 /**
  * Write extracted field values onto the Tor.
  *
- * Two guards apply to every write in here:
+ * Three guards apply to every write in here:
  *  - NFR-DAT-06: a field key present in `extraction.humanCorrectedFields` is
  *    never overwritten, even though no editor exists yet to populate that
  *    array — the guard is defensive, wired ahead of the feature that needs it.
+ *  - A field is only written when this document's own confidence for it
+ *    matches the TOR's rolled-up (best-so-far) confidence from `rollup` —
+ *    i.e. this document is actually the one that produced the winning
+ *    value. A worse document processed after a better one must not clobber
+ *    it just because it happened to run more recently.
  *  - The model's structured-output schema represents every field value as a
  *    string (Gemini's schema support doesn't cleanly express "string OR
  *    number OR array" as a union), so array/number-shaped fields below are
@@ -228,82 +411,144 @@ function fieldConfidenceMap(fields: Record<ExtractedFieldKey, FieldExtraction>):
  */
 async function applyExtractionToTor(
   torId: Types.ObjectId,
-  structured: Awaited<ReturnType<typeof extractStructuredFields>>,
-  routing: 'pending_review' | 'published',
-  documentId: Types.ObjectId,
-  _jobId: Types.ObjectId
+  structured: StructuredExtractionResult,
+  rollup: TorRollup,
+  documentId: Types.ObjectId
 ): Promise<void> {
-  const tor = await TorModel.findById(torId).select('extraction.humanCorrectedFields status').lean();
-  const corrected = new Set(tor?.extraction?.humanCorrectedFields ?? []);
+  const corrected = rollup.correctedFields;
   const value = (key: ExtractedFieldKey) => structured.fields[key]?.value;
+  const evidence = (key: ExtractedFieldKey) => structured.fields[key]?.evidence ?? null;
+
+  /**
+   * Grounding (gemini.service.ts's verifyGrounding) only proves the
+   * "evidence" quote appears verbatim in the source — it never checks that
+   * the model's own parsed "value" is actually a correct reading of that
+   * quote. Live-confirmed 2026-09-16: a document whose text unambiguously
+   * said "ในวันที่ ๑๖ กันยายน ๒๕๖๙" (16 September) was stored as a
+   * submissionDeadline of the 17th, at confidence 1.0 — evidence intact,
+   * grounding passed, value simply wrong by a day, most likely the model's
+   * own BE→CE/timezone arithmetic slipping rather than a misread. Deriving
+   * the date deterministically from the grounded evidence text with the same
+   * parser the scrape pipeline already trusts (core/thaiDate.ts) removes the
+   * model's arithmetic from the trust chain entirely for the one kind of
+   * mistake here that actually costs a vendor a deadline. Only date-only,
+   * midnight UTC — any time-of-day the model captured is lost in exchange
+   * for the day itself being right, which matters far more. Falls back to
+   * the model's own value when the evidence text doesn't contain a date
+   * `parseThaiDate` recognises (e.g. a relative reference like "within 30
+   * days"), never silently to nothing.
+   */
+  function resolvedDate(key: ExtractedFieldKey): Date | undefined {
+    return parseThaiDate(evidence(key)) ?? asDate(value(key));
+  }
+  // Fields this document actually contributed the (tied-or-better) merged
+  // confidence for — everything else keeps whatever the TOR already had.
+  const writable = new Set(
+    EXTRACTED_FIELD_KEYS.filter(
+      (key) => !corrected.has(key) && structured.fields[key].confidence >= rollup.fieldConfidence.get(key)!
+    )
+  );
 
   const set: Record<string, unknown> = {
-    status: routing,
-    'extraction.overallConfidence': structured.overallConfidence,
-    'extraction.fieldConfidence': fieldConfidenceMap(structured.fields),
+    status: rollup.routing,
+    'extraction.overallConfidence': rollup.overallConfidence,
+    'extraction.fieldConfidence': rollup.fieldConfidence,
     'extraction.modelVersion': extractModelVersionLabel(),
     'extraction.promptVersion': EXTRACTION_PROMPT_VERSION,
     'extraction.language': structured.language,
     'extraction.discardedFields': structured.discardedFields,
     'extraction.lastProcessedAt': new Date(),
     'extraction.lastDocumentId': documentId,
-    'summaryAi.text': structured.summary,
-    'summaryAi.model': extractModelVersionLabel(),
-    'summaryAi.generatedAt': new Date(),
-    'summaryAi.confidence': structured.overallConfidence,
   };
 
-  assignIfNotCorrected(set, corrected, 'referenceNumber', 'referenceNumber', asString(value('referenceNumber')));
-  assignIfNotCorrected(set, corrected, 'description', 'description', asString(value('description')));
-  assignIfNotCorrected(set, corrected, 'requiredTechnologies', 'technologies', asStringArray(value('requiredTechnologies')));
-  assignIfNotCorrected(set, corrected, 'deliverables', 'deliverables', asStringArray(value('deliverables')));
-  assignIfNotCorrected(set, corrected, 'keyRisks', 'keyRisks', asStringArray(value('keyRisks')));
-  assignIfNotCorrected(set, corrected, 'estimatedComplexity', 'estimatedComplexity', asComplexity(value('estimatedComplexity')));
-  assignIfNotCorrected(set, corrected, 'budget', 'budget.amountThb', asNumber(value('budget')));
-  assignIfNotCorrected(
+  if (rollup.lifecycleOverride) {
+    set['lifecycle.stage'] = rollup.lifecycleOverride.stage;
+    set['lifecycle.stageLabel'] = rollup.lifecycleOverride.stageLabel;
+    set['lifecycle.isAwarded'] = rollup.lifecycleOverride.isAwarded;
+    set['lifecycle.signal'] = rollup.lifecycleOverride.signal;
+  }
+
+  // Written only when this document's summary actually grounded (see
+  // gemini.service.ts's groundAndScore) AND ties-or-beats whatever summary
+  // the Tor already has — never unconditionally, which was the bug: every
+  // structured field already went through this exact gate, but `summaryAi`
+  // was written straight through regardless of grounding, so a fluent
+  // hallucination could reach a published record even when every
+  // individual field correctly came back empty (confirmed live: a Ministry
+  // of Labour computer-equipment TOR whose summary confidently described an
+  // unrelated water-distribution project's budget and deadline — numbers
+  // that appeared nowhere in the source document). When this document's
+  // summary doesn't win, the Tor's existing summaryAi (possibly none at
+  // all) is left untouched rather than overwritten with an empty one.
+  if (rollup.summaryWins) {
+    set['summaryAi.text'] = structured.summary;
+    set['summaryAi.model'] = extractModelVersionLabel();
+    set['summaryAi.generatedAt'] = new Date();
+    set['summaryAi.confidence'] = structured.summaryConfidence;
+  }
+
+  assignIfWritable(set, writable, 'referenceNumber', 'referenceNumber', asString(value('referenceNumber')));
+  assignIfWritable(set, writable, 'description', 'description', asString(value('description')));
+  assignIfWritable(set, writable, 'requiredTechnologies', 'technologies', asStringArray(value('requiredTechnologies')));
+  assignIfWritable(set, writable, 'deliverables', 'deliverables', asStringArray(value('deliverables')));
+  assignIfWritable(set, writable, 'keyRisks', 'keyRisks', asStringArray(value('keyRisks')));
+  assignIfWritable(set, writable, 'estimatedComplexity', 'estimatedComplexity', asComplexity(value('estimatedComplexity')));
+  assignIfWritable(set, writable, 'budget', 'budget.amountThb', asNumber(value('budget')));
+  assignIfWritable(
     set,
-    corrected,
+    writable,
     'qualificationRequirements',
-    'qualifications.rawText',
-    asString(value('qualificationRequirements'))
+    'qualifications.items',
+    asStringArray(value('qualificationRequirements'))
   );
   // evaluationCriteria's real shape is a structured array ({criterion,
   // weightPercent}); the model's flat-string schema can only responsibly
   // supply the raw text, so it's stored as a single unweighted criterion
   // rather than fabricating a breakdown the source text may not actually give.
   const rawCriteria = asString(value('evaluationCriteria'));
-  if (rawCriteria && !corrected.has('evaluationCriteria')) {
+  if (rawCriteria && writable.has('evaluationCriteria')) {
     set.evaluationCriteria = [{ criterion: rawCriteria, weightPercent: undefined }];
   }
 
-  assignIfNotCorrected(set, corrected, 'timelineCommentClose', 'timeline.commentPeriodEnd', asDate(value('timelineCommentClose')));
-  assignIfNotCorrected(
+  assignIfWritable(set, writable, 'timelineCommentClose', 'timeline.commentPeriodEnd', resolvedDate('timelineCommentClose'));
+  assignIfWritable(
     set,
-    corrected,
+    writable,
     'timelineClarificationMeeting',
     'timeline.clarificationMeetingDate',
-    asDate(value('timelineClarificationMeeting'))
+    resolvedDate('timelineClarificationMeeting')
   );
-  assignIfNotCorrected(
+  assignIfWritable(
     set,
-    corrected,
+    writable,
     'timelineSubmissionDeadline',
     'timeline.submissionDeadline',
-    asDate(value('timelineSubmissionDeadline'))
+    resolvedDate('timelineSubmissionDeadline')
   );
-  assignIfNotCorrected(set, corrected, 'timelineAnnouncement', 'timeline.announcementDate', asDate(value('timelineAnnouncement')));
+  assignIfWritable(set, writable, 'timelineAnnouncement', 'timeline.announcementDate', resolvedDate('timelineAnnouncement'));
 
-  await TorModel.updateOne({ _id: torId, status: { $in: ['discovered', 'extracting'] } }, { $set: set });
+  // Allows pending_review, not just discovered/extracting: a TOR's second or
+  // third document must still be able to refine it while a human reviewer
+  // has it queued — previously this guard excluded pending_review, which
+  // meant only the FIRST document ever processed for a TOR could reach it at
+  // all; every later document for the same TOR ran (OCR + Gemini cost and
+  // all) and then had its result silently discarded right here. Only a
+  // genuinely terminal status (published and beyond) blocks further writes,
+  // per NFR-REL-06 in the docstring above.
+  await TorModel.updateOne(
+    { _id: torId, status: { $in: ['discovered', 'extracting', 'pending_review'] } },
+    { $set: set }
+  );
 }
 
-function assignIfNotCorrected(
+function assignIfWritable(
   target: Record<string, unknown>,
-  corrected: Set<string>,
+  writable: Set<string>,
   fieldKey: string,
   torPath: string,
   value: unknown
 ): void {
-  if (value === undefined || value === null || corrected.has(fieldKey)) return;
+  if (value === undefined || value === null || !writable.has(fieldKey)) return;
   target[torPath] = value;
 }
 
@@ -320,6 +565,17 @@ async function recordFailure(
     }
   );
   if (!torId) return; // ExtractionJob.torId is required — nothing to link a job to.
+
+  // processDocument flips the Tor to 'extracting' before attempting the AI
+  // call, so a failure this far in leaves it stuck there forever (nothing
+  // else ever moves a Tor OUT of 'extracting') unless reverted here — it
+  // would silently vanish from every queue: not 'discovered' (so the sweep
+  // won't pick it up again on its own), not 'pending_review' (so it's not in
+  // the review queue either). Guarded on still being 'extracting' so this
+  // never clobbers a status a concurrent, successful document already moved
+  // past.
+  await TorModel.updateOne({ _id: torId, status: 'extracting' }, { $set: { status: 'discovered' } });
+
   await ExtractionJobModel.create({
     documentId,
     torId,

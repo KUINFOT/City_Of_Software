@@ -3,13 +3,32 @@ import { Schema, model, InferSchemaType } from 'mongoose';
 const documentSchema = new Schema(
   {
     originalName: { type: String, required: true },
+    // Optional: only the search-filtering upload path populates this today —
+    // scraped attachments (extraction/pipeline/attachments.ts) and admin
+    // manual uploads (controllers/review.controller.ts) never set it, and
+    // requiring it would break DocumentModel.create() on both of those.
+    projectTitle: { type: String, default: '' },
     mimeType: { type: String, required: true },
     size: { type: Number, required: true },
-    status: {
+    // The AI-extraction pipeline's own lifecycle only — the AI-extraction
+    // sweep's work queue is DocumentModel.find({ status: 'uploaded' })
+    // (pipeline/aiExtraction.ts), so this must stay pipeline-only or a
+    // search-filtering-created document would default into it invisibly.
+    status: { type: String, enum: ['uploaded', 'extracted', 'summarized', 'error'], default: 'uploaded' },
+    // The search-filtering feature's own tender-status labels — split out
+    // from `status` (feat/search_filtering, 2026-09-16) so the two features'
+    // enums can evolve independently instead of sharing one combined list.
+    tenderStatus: {
       type: String,
-      enum: ['uploaded', 'extracted', 'summarized', 'error'],
-      default: 'uploaded',
+      enum: ['draft_feedback', 'open_for_bids', 'under_review', 'closed'],
+      default: 'draft_feedback',
     },
+    datePublished: { type: Date, default: null },
+    agency: { type: String, default: '' },
+    budget: { type: String, default: '' },
+    deadline: { type: Date, default: null },
+    technology: { type: String, default: '' },
+    projectType: { type: String, default: '' },
     extractedText: { type: String, default: '' },
     summary: { type: String, default: '' },
     metadata: {

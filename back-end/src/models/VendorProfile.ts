@@ -16,6 +16,17 @@ const pastContractSchema = new Schema(
   { _id: false }
 );
 
+const profileVersionSchema = new Schema(
+  {
+    version: { type: Number, required: true, min: 1 },
+    effectiveAt: { type: Date, required: true },
+    // A complete, validated copy lets matching explain which declared
+    // capability set was in effect when a future match was computed.
+    profile: { type: Schema.Types.Mixed, required: true },
+  },
+  { _id: false }
+);
+
 const vendorProfileSchema = new Schema(
   {
     userId: { type: Schema.Types.ObjectId, ref: 'User', required: true, unique: true },
@@ -38,13 +49,22 @@ const vendorProfileSchema = new Schema(
       projectTypes: [String],
       technologies: [String],
       budgetRange: { minThb: Number, maxThb: Number },
+      // Followed agencies (SCRUM-98/99, UC-07) — an explicit watchlist a
+      // vendor curates on top of profile-based matching, distinct from
+      // techStack/projectTypes above (which describe the vendor's own
+      // capabilities, not what they've chosen to track).
       agencyIds: [{ type: Schema.Types.ObjectId, ref: 'Agency' }],
+      // Free-text terms a vendor wants matched against a TOR's title,
+      // independent of technologies/projectTypes.
+      keywords: [String],
     },
     notificationPrefs: {
       channels: { type: [String], default: ['email', 'in_app'] },
       frequency: { type: String, enum: ['instant', 'daily_digest'], default: 'instant' },
       minMatchScore: { type: Number, default: 0 },
     },
+    profileVersion: { type: Number, required: true, default: 1, min: 1 },
+    profileHistory: { type: [profileVersionSchema], default: [] },
   },
   { timestamps: true }
 );

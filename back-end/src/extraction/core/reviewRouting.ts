@@ -23,10 +23,21 @@ import type { ExtractionConfig } from './config';
 
 export type RoutingDecision = 'pending_review' | 'published';
 
+/**
+ * `isAwarded: true` always forces `pending_review`, regardless of confidence
+ * — a contract that's already been won is exactly the "useless to a vendor
+ * looking for work" data this platform exists to filter OUT (see the SRS's
+ * own opening statement), so it must never slip through on a high score. A
+ * human still has to look at it and reject it explicitly; this only closes
+ * off the auto-publish path, the same way a low score does.
+ */
 export function decideRouting(
   overallConfidence: number,
-  cfg: Pick<ExtractionConfig, 'autoPublishEnabled' | 'reviewThreshold' | 'autoPublishThreshold'>
+  cfg: Pick<ExtractionConfig, 'autoPublishEnabled' | 'reviewThreshold' | 'autoPublishThreshold'>,
+  isAwarded: boolean | null = null
 ): RoutingDecision {
+  if (isAwarded) return 'pending_review';
+
   const clearsReview = overallConfidence >= cfg.reviewThreshold;
   const clearsAutoPublish = overallConfidence >= cfg.autoPublishThreshold;
 
