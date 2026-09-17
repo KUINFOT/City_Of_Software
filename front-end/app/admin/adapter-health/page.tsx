@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { Activity, AlertTriangle, CheckCircle2, ChevronRight, RadioTower, RefreshCw, ServerCrash } from "lucide-react";
 import { AccountShell } from "@/components/account-shell";
+import { useAuth } from "@/components/auth-provider";
 import { useAdminAudit } from "@/components/admin-audit-provider";
 import { getSourcesHealth, SourceHealth, SourceHealthStatus } from "@/lib/extraction-api";
 
@@ -32,6 +33,7 @@ function formatDate(value: string | null) {
 }
 
 export default function AdapterHealthPage() {
+  const { token } = useAuth();
   const [sources, setSources] = useState<SourceHealth[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -41,9 +43,10 @@ export default function AdapterHealthPage() {
   const { recordEvent } = useAdminAudit();
 
   async function load() {
+    if (!token) return;
     try {
       setError("");
-      const result = await getSourcesHealth();
+      const result = await getSourcesHealth(token);
       setSources(result);
     } catch (err) {
       setError(err instanceof Error ? err.message : "ไม่สามารถโหลดสถานะตัวเชื่อมต่อได้");
@@ -53,7 +56,7 @@ export default function AdapterHealthPage() {
   useEffect(() => {
     setLoading(true);
     load().finally(() => setLoading(false));
-  }, []);
+  }, [token]);
 
   const visibleSources = useMemo(() => filter === "All" ? sources : sources.filter((s) => s.health === filter), [filter, sources]);
   const selected = sources.find((s) => s.sourceId === selectedId);

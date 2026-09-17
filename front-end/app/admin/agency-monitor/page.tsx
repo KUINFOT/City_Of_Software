@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Clock3, ExternalLink, Globe2, Play, ShieldAlert } from "lucide-react";
 import { AccountShell } from "@/components/account-shell";
+import { useAuth } from "@/components/auth-provider";
 import { useAdminAudit } from "@/components/admin-audit-provider";
 import { ExtractionSource, getSourcesHealth, listExtractionSources, RunResult, SourceHealth, triggerSourceRun } from "@/lib/extraction-api";
 
@@ -29,6 +30,7 @@ function formatDate(value: string | null | undefined) {
 }
 
 export default function AgencyMonitorPage() {
+  const { token } = useAuth();
   const [sources, setSources] = useState<ExtractionSource[]>([]);
   const [health, setHealth] = useState<Record<string, SourceHealth>>({});
   const [loading, setLoading] = useState(true);
@@ -39,9 +41,10 @@ export default function AgencyMonitorPage() {
   const { recordEvent } = useAdminAudit();
 
   async function load() {
+    if (!token) return;
     try {
       setLoadError("");
-      const [sourcesResult, healthResult] = await Promise.all([listExtractionSources(), getSourcesHealth()]);
+      const [sourcesResult, healthResult] = await Promise.all([listExtractionSources(token), getSourcesHealth(token)]);
       setSources(sourcesResult);
       setHealth(Object.fromEntries(healthResult.map((h) => [h.sourceId, h])));
     } catch (err) {
@@ -52,7 +55,7 @@ export default function AgencyMonitorPage() {
   useEffect(() => {
     setLoading(true);
     load().finally(() => setLoading(false));
-  }, []);
+  }, [token]);
 
   const summary = useMemo(() => {
     const values = Object.values(health);
@@ -64,10 +67,11 @@ export default function AgencyMonitorPage() {
   }, [sources, health]);
 
   async function runNow(source: ExtractionSource) {
+    if (!token) return;
     setRunningId(source.id);
     setNotice("");
     try {
-      const result = await triggerSourceRun(source.id);
+      const result = await triggerSourceRun(source.id, token);
       setLastRunResult({ sourceId: source.id, result });
       setNotice(`รัน ${source.label} เสร็จสิ้น — พบ ${result.found} รายการ (ใหม่ ${result.created}, อัปเดต ${result.updated})`);
       recordEvent({ category: "Monitoring", action: "รันตัวเชื่อมต่อทันที", target: source.label, details: `POST /api/extraction/sources/${source.id}/run — สถานะ ${result.status}, พบ ${result.found} รายการ` });
