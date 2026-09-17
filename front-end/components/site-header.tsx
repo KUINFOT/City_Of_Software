@@ -5,7 +5,12 @@ import { Brand } from "./brand";
 import { useAuth } from "./auth-provider";
 import { AccountMenu } from "./account-menu";
 
-const links = ["หน้าหลัก", "ค้นหา TOR", "ข้อมูลเชิงลึกจาก AI", "สำหรับผู้ขาย", "หน่วยงาน กทม."];
+const links = ["หน้าหลัก", "ค้นหา TOR", "ค้นหาขั้นสูง", "ข้อมูลเชิงลึกจาก AI", "สำหรับผู้ขาย", "หน่วยงาน กทม."];
+const linkHrefs: Record<string, string> = {
+  "หน้าหลัก": "/",
+  "ค้นหา TOR": "/browse-tors",
+  "ค้นหาขั้นสูง": "/search",
+};
 
 export function SiteHeader({ active = "หน้าหลัก" }: { active?: string }) {
   const { user, ready } = useAuth();
@@ -16,7 +21,7 @@ export function SiteHeader({ active = "หน้าหลัก" }: { active?: s
         {links.map((link) => (
           <Link
             key={link}
-            href={link === "หน้าหลัก" ? "/" : link === "ค้นหา TOR" ? "/browse-tors" : `/#${link}`}
+            href={linkHrefs[link] ?? `/#${link}`}
             className={active === link ? "active" : ""}
           >
             {link}

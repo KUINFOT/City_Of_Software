@@ -182,7 +182,7 @@ export default function SearchPage() {
 
 	return (
 		<div className="search-page">
-			<SiteHeader active="ค้นหา TOR" />
+			<SiteHeader active="ค้นหาขั้นสูง" />
 
 			<section className="search-hero">
 				<div className="search-hero__inner">
