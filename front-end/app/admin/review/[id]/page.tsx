@@ -133,7 +133,7 @@ function currentValue(record: ReviewRecord, key: string): string {
 export default function ReviewRecordPage() {
   const params = useParams<{ id: string }>();
   const router = useRouter();
-  const { user } = useAuth();
+  const { user, token } = useAuth();
 
   const [record, setRecord] = useState<ReviewRecord | null>(null);
   const [loading, setLoading] = useState(true);
@@ -147,8 +147,9 @@ export default function ReviewRecordPage() {
   const [busy, setBusy] = useState(false);
 
   function load() {
+    if (!token) return;
     setLoading(true);
-    getReviewRecord(params.id)
+    getReviewRecord(params.id, token)
       .then((result) => {
         setRecord(result);
         setValues(Object.fromEntries(FIELD_CONFIG.map((f) => [f.key, currentValue(result, f.key)])));
@@ -158,7 +159,7 @@ export default function ReviewRecordPage() {
       .finally(() => setLoading(false));
   }
 
-  useEffect(load, [params.id]);
+  useEffect(load, [params.id, token]);
 
   const correctedFields = useMemo(() => new Set(record?.extraction?.humanCorrectedFields ?? []), [record]);
   const discardedFields = useMemo(() => new Set(record?.extraction?.discardedFields ?? []), [record]);
@@ -169,7 +170,7 @@ export default function ReviewRecordPage() {
   }
 
   async function saveCorrections() {
-    if (!record || !user) return;
+    if (!record || !user || !token) return;
     const corrections: Record<string, string> = {};
     for (const key of dirty) {
       const value = values[key]?.trim();
@@ -180,7 +181,7 @@ export default function ReviewRecordPage() {
     setSaving(true);
     setActionError("");
     try {
-      const updated = await correctFields(record._id, user.id, corrections);
+      const updated = await correctFields(record._id, token, user.id, corrections);
       setRecord(updated);
       setValues(Object.fromEntries(FIELD_CONFIG.map((f) => [f.key, currentValue(updated, f.key)])));
       setDirty(new Set());
@@ -192,12 +193,12 @@ export default function ReviewRecordPage() {
   }
 
   async function approve() {
-    if (!record || !user) return;
+    if (!record || !user || !token) return;
     if (!window.confirm(`ยืนยันการอนุมัติและเผยแพร่ "${record.title}"?`)) return;
     setBusy(true);
     setActionError("");
     try {
-      await approveRecord(record._id, user.id);
+      await approveRecord(record._id, token, user.id);
       router.push("/admin/review");
     } catch (err) {
       setActionError(err instanceof Error ? err.message : "อนุมัติไม่สำเร็จ");
@@ -206,11 +207,11 @@ export default function ReviewRecordPage() {
   }
 
   async function reject() {
-    if (!record || !user || !rejectReason.trim()) return;
+    if (!record || !user || !token || !rejectReason.trim()) return;
     setBusy(true);
     setActionError("");
     try {
-      await rejectRecord(record._id, user.id, rejectReason.trim());
+      await rejectRecord(record._id, token, user.id, rejectReason.trim());
       router.push("/admin/review");
     } catch (err) {
       setActionError(err instanceof Error ? err.message : "ปฏิเสธไม่สำเร็จ");

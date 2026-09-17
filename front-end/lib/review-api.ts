@@ -45,26 +45,29 @@ export type ReviewRecord = {
 
 const apiBaseUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000/api";
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${apiBaseUrl}${path}`, init);
+async function request<T>(path: string, token: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(`${apiBaseUrl}${path}`, {
+    ...init,
+    headers: { Authorization: `Bearer ${token}`, ...init?.headers },
+  });
   const payload = (await response.json().catch(() => null)) as (T & { error?: string }) | null;
   if (!response.ok || payload === null) throw new Error(payload?.error ?? "ไม่สามารถเชื่อมต่อกับเซิร์ฟเวอร์ได้");
   return payload;
 }
 
 /** GET /api/review/queue — FR-ADM-01: pending records, oldest first. */
-export function listReviewQueue(): Promise<ReviewQueueItem[]> {
-  return request("/review/queue?limit=200");
+export function listReviewQueue(token: string): Promise<ReviewQueueItem[]> {
+  return request("/review/queue?limit=200", token);
 }
 
 /** GET /api/review/queue/:id — full record for the review editor. */
-export function getReviewRecord(id: string): Promise<ReviewRecord> {
-  return request(`/review/queue/${id}`);
+export function getReviewRecord(id: string, token: string): Promise<ReviewRecord> {
+  return request(`/review/queue/${id}`, token);
 }
 
 /** PATCH /api/review/queue/:id/fields — US-043: hand-correct one or more fields. */
-export function correctFields(id: string, actorId: string, corrections: Record<string, unknown>): Promise<ReviewRecord> {
-  return request(`/review/queue/${id}/fields`, {
+export function correctFields(id: string, token: string, actorId: string, corrections: Record<string, unknown>): Promise<ReviewRecord> {
+  return request(`/review/queue/${id}/fields`, token, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ actorId, corrections }),
@@ -72,8 +75,8 @@ export function correctFields(id: string, actorId: string, corrections: Record<s
 }
 
 /** POST /api/review/queue/:id/approve — FR-ADM-05: publish. */
-export function approveRecord(id: string, actorId: string): Promise<ReviewRecord> {
-  return request(`/review/queue/${id}/approve`, {
+export function approveRecord(id: string, token: string, actorId: string): Promise<ReviewRecord> {
+  return request(`/review/queue/${id}/approve`, token, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ actorId }),
@@ -81,8 +84,8 @@ export function approveRecord(id: string, actorId: string): Promise<ReviewRecord
 }
 
 /** POST /api/review/queue/:id/reject — FR-ADM-03: reject with a recorded reason. */
-export function rejectRecord(id: string, actorId: string, reason: string): Promise<ReviewRecord> {
-  return request(`/review/queue/${id}/reject`, {
+export function rejectRecord(id: string, token: string, actorId: string, reason: string): Promise<ReviewRecord> {
+  return request(`/review/queue/${id}/reject`, token, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ actorId, reason }),

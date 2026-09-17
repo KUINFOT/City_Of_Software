@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { AlertTriangle, ClipboardCheck, Eye, Search } from "lucide-react";
 import { AccountShell } from "@/components/account-shell";
+import { useAuth } from "@/components/auth-provider";
 import { listReviewQueue, ReviewQueueItem } from "@/lib/review-api";
 
 const READY_THRESHOLD = 0.75;
@@ -19,19 +20,21 @@ function formatDate(value: string | null | undefined) {
 }
 
 export default function ReviewQueuePage() {
+  const { token } = useAuth();
   const [items, setItems] = useState<ReviewQueueItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [query, setQuery] = useState("");
 
   useEffect(() => {
+    if (!token) return;
     let cancelled = false;
-    listReviewQueue()
+    listReviewQueue(token)
       .then((result) => { if (!cancelled) setItems(result); })
       .catch((err) => { if (!cancelled) setError(err instanceof Error ? err.message : "ไม่สามารถโหลดคิวตรวจสอบได้"); })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, []);
+  }, [token]);
 
   const visibleItems = useMemo(() => {
     const normalized = query.trim().toLowerCase();
