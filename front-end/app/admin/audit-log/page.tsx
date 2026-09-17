@@ -36,7 +36,7 @@ export default function AuditLogPage() {
     if (!token) return;
     let cancelled = false;
     setLoading(true);
-    Promise.all([getAuditLog({ limit: 200 }), listManagedUsers(token)])
+    Promise.all([getAuditLog(token, { limit: 200 }), listManagedUsers(token)])
       .then(([auditEntries, usersResult]) => {
         if (cancelled) return;
         setEntries(auditEntries);
