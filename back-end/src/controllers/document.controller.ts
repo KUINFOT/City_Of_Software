@@ -95,15 +95,19 @@ export async function listDocuments(
     const andConditions: Record<string, unknown>[] = [...searchConditions];
 
     // Same BR-03 public-visibility rule as GET /api/tors: published only,
-    // and never a posting whose submission deadline has already passed.
-    const todayStart = new Date(startOfUtcDay(new Date()));
-    andConditions.push({
-      $or: [
-        { 'timeline.submissionDeadline': { $exists: false } },
-        { 'timeline.submissionDeadline': null },
-        { 'timeline.submissionDeadline': { $gte: todayStart } },
-      ],
-    });
+    // and by default never a posting whose submission deadline has already
+    // passed. `availability=all` is the search page's explicit opt-in to also
+    // browse lapsed postings; anything else keeps the available-only default.
+    if (req.query.availability !== 'all') {
+      const todayStart = new Date(startOfUtcDay(new Date()));
+      andConditions.push({
+        $or: [
+          { 'timeline.submissionDeadline': { $exists: false } },
+          { 'timeline.submissionDeadline': null },
+          { 'timeline.submissionDeadline': { $gte: todayStart } },
+        ],
+      });
+    }
 
     const technologies = queryValues(req.query.technology);
     if (technologies.length > 0) andConditions.push({ technologies: { $in: technologies } });
