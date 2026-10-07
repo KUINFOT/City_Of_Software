@@ -50,6 +50,12 @@ export interface ExtractionSweepOptions {
   batchSize?: number;
   store?: BlobStore;
   logger?: Logger;
+  /**
+   * Restrict the sweep to these documents instead of the oldest `uploaded`
+   * backlog. A targeted run also skips the docless-TOR routing pass, which
+   * is a bulk status change unrelated to the documents being processed.
+   */
+  documentIds?: Types.ObjectId[];
 }
 
 export async function runExtractionSweep(
@@ -68,7 +74,7 @@ export async function runExtractionSweep(
     routedReview: 0,
   };
 
-  result.doclessRouted = await routeDoclessTors(logger);
+  if (!options.documentIds) result.doclessRouted = await routeDoclessTors(logger);
 
   // EXTRACTION_MAX_DOCUMENTS: a temporary dev-environment hard ceiling (see
   // core/config.ts) — 0 means no limit. Independent of the crawler's own
@@ -89,7 +95,10 @@ export async function runExtractionSweep(
     effectiveBatchSize = Math.min(batchSize, budgetRemaining);
   }
 
-  const documents = await DocumentModel.find({ status: 'uploaded' })
+  const documents = await DocumentModel.find({
+    status: 'uploaded',
+    ...(options.documentIds ? { _id: { $in: options.documentIds } } : {}),
+  })
     .sort({ createdAt: 1 })
     .limit(effectiveBatchSize);
 
