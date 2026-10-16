@@ -1,10 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
-import { AlertTriangle, Building2, CheckCircle2, Copy, Download, HelpCircle, Sparkles, Star, UserPlus } from "lucide-react";
+import { AlertTriangle, Bookmark, BookmarkCheck, Building2, CheckCircle2, Copy, Download, HelpCircle, Sparkles, Star, UserPlus } from "lucide-react";
 import { useAuth } from "@/components/auth-provider";
+import { listBookmarks, removeBookmark, saveBookmark } from "@/lib/bookmarks-api";
 import {
   getMatchReasons,
   getQualificationMatch,
@@ -82,6 +83,7 @@ function asStringArray(value: unknown): string[] {
 
 export function TorDetailClient() {
   const params = useParams<{ id: string }>();
+  const router = useRouter();
   const torId = params.id;
   const { user, token, ready } = useAuth();
 
@@ -96,6 +98,48 @@ export function TorDetailClient() {
 
   const [linkCopied, setLinkCopied] = useState(false);
   const [copyError, setCopyError] = useState(false);
+  const [isBookmarked, setIsBookmarked] = useState(false);
+  const [bookmarkBusy, setBookmarkBusy] = useState(false);
+  const [bookmarkError, setBookmarkError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!token) {
+      setIsBookmarked(false);
+      return;
+    }
+    let cancelled = false;
+    listBookmarks(token)
+      .then((bookmarks) => {
+        if (!cancelled) setIsBookmarked(bookmarks.some((bookmark) => bookmark.torId === torId));
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) setBookmarkError(error instanceof Error ? error.message : "ไม่สามารถโหลดสถานะการบันทึก TOR ได้");
+      });
+    return () => { cancelled = true; };
+  }, [token, torId]);
+
+  async function toggleBookmark() {
+    if (!token) {
+      router.push(`/login?next=${encodeURIComponent(window.location.pathname + window.location.search)}`);
+      return;
+    }
+
+    setBookmarkError(null);
+    setBookmarkBusy(true);
+    try {
+      if (isBookmarked) {
+        await removeBookmark(token, torId);
+        setIsBookmarked(false);
+      } else {
+        await saveBookmark(token, torId);
+        setIsBookmarked(true);
+      }
+    } catch (error) {
+      setBookmarkError(error instanceof Error ? error.message : "บันทึก TOR ไม่สำเร็จ");
+    } finally {
+      setBookmarkBusy(false);
+    }
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -349,6 +393,11 @@ export function TorDetailClient() {
               <button className="tor-action-button" type="button" disabled title="ฟีเจอร์นี้จะเปิดให้ใช้งานเร็วๆ นี้">
                 บันทึกโครงการ<span className="tor-coming-soon">เร็วๆ นี้</span>
               </button>
+              <button className="tor-action-button" type="button" onClick={() => { void toggleBookmark(); }} disabled={bookmarkBusy}>
+                {isBookmarked ? <BookmarkCheck size={16} /> : <Bookmark size={16} />}
+                {isBookmarked ? "บันทึก TOR แล้ว" : "บันทึก TOR"}
+              </button>
+              {bookmarkError && <p className="bookmark-error" role="alert">{bookmarkError}</p>}
               <button className="tor-action-button" type="button" onClick={copyLink}>
                 <Copy size={15} />{linkCopied ? "คัดลอกลิงก์แล้ว" : copyError ? "คัดลอกลิงก์ไม่สำเร็จ" : "แชร์โครงการ"}
               </button>

@@ -2,14 +2,16 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Activity, Bell, Bookmark, Bot, CircleUserRound, ClipboardCheck, Gauge, HardDriveDownload, History, KeyRound, RadioTower, ShieldCheck } from "lucide-react";
+import { Activity, AlertCircle, Bell, Bookmark, Bot, Calendar, CircleUserRound, ClipboardCheck, Cog, Gauge, HardDriveDownload, History, KeyRound, RadioTower, ShieldCheck } from "lucide-react";
 import { Brand } from "./brand";
 import { useAuth } from "./auth-provider";
 
 const items = [
   { label: "แดชบอร์ด", href: "/dashboard", icon: Gauge },
-  { label: "TOR ที่ AI แนะนำ", href: "/dashboard#recommendations", icon: Bot },
-  { label: "โครงการที่บันทึกไว้", href: "/dashboard#bookmarks", icon: Bookmark },
+  { label: "TOR ที่ AI แนะนำ", href: "/ai-recommendations", icon: Bot },
+  { label: "โครงการที่บันทึกไว้", href: "/saved-projects", icon: Bookmark },
+  { label: "กำหนดส่งที่ใกล้ถึง", href: "/imminent-deadlines", icon: AlertCircle },
+  { label: "ปฏิทิน", href: "/calendar", icon: Calendar },
   { label: "ตั้งค่าการแจ้งเตือน", href: "/settings#notifications", icon: Bell },
   { label: "โปรไฟล์บัญชี", href: "/settings", icon: CircleUserRound },
   { label: "API Key สำหรับนักพัฒนา", href: "/settings#api", icon: KeyRound },
