@@ -30,7 +30,7 @@ export interface IqrBounds {
 }
 
 /** Linear-interpolation percentile — matches the common "Tukey hinges" convention closely enough for this purpose. */
-function percentile(sorted: number[], p: number): number {
+export function percentile(sorted: number[], p: number): number {
   if (sorted.length === 1) return sorted[0];
   const idx = p * (sorted.length - 1);
   const lower = Math.floor(idx);
