@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Activity, Bell, Bookmark, Bot, CircleUserRound, ClipboardCheck, Gauge, HardDriveDownload, History, KeyRound, RadioTower, ShieldCheck } from "lucide-react";
+import { Activity, BarChart3, Bell, Bookmark, Bot, Building2, CircleUserRound, ClipboardCheck, Gauge, HardDriveDownload, History, KeyRound, RadioTower, ShieldCheck } from "lucide-react";
 import { Brand } from "./brand";
 import { useAuth } from "./auth-provider";
 
@@ -13,6 +13,8 @@ const items = [
   { label: "ตั้งค่าการแจ้งเตือน", href: "/settings#notifications", icon: Bell },
   { label: "โปรไฟล์บัญชี", href: "/settings", icon: CircleUserRound },
   { label: "API Key สำหรับนักพัฒนา", href: "/settings#api", icon: KeyRound },
+  { label: "เปรียบเทียบงบประมาณ", href: "/analytics/budgets", icon: BarChart3 },
+  { label: "ความถี่รายหน่วยงาน", href: "/analytics/agencies", icon: Building2 },
 ];
 
 export function Sidebar() {

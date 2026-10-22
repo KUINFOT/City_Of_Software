@@ -5,7 +5,7 @@ import { Brand } from "./brand";
 import { useAuth } from "./auth-provider";
 import { AccountMenu } from "./account-menu";
 
-const links = ["หน้าหลัก", "ค้นหา TOR", "ค้นหาขั้นสูง", "ข้อมูลเชิงลึกจาก AI", "สำหรับผู้ขาย", "หน่วยงาน กทม."];
+const links = ["หน้าหลัก", "ค้นหา TOR", "ค้นหาขั้นสูง"];
 const linkHrefs: Record<string, string> = {
   "หน้าหลัก": "/",
   "ค้นหา TOR": "/browse-tors",
