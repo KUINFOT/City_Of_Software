@@ -416,6 +416,38 @@ button { cursor: pointer; }
 .qualification-list__item--not_met svg { color: var(--orange); flex-shrink: 0; margin-top: 1px; }
 .qualification-list__item--undetermined svg { color: var(--muted); flex-shrink: 0; margin-top: 1px; }
 
+.panel--detail { padding: 28px; border-radius: 16px; box-shadow: none; }
+.panel--detail .panel-title h2 { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; font-size: 18px; font-weight: 800; color: var(--ink); }
+.tor-caution { display: inline-block; margin-left: 8px; padding: 2px 8px; color: #8a5b00; background: #fff1cf; border-radius: 4px; font-size: 11px; font-weight: 700; white-space: nowrap; vertical-align: middle; }
+.tor-info-strip .tor-caution { margin-left: 0; justify-self: start; }
+.tor-hero-card__section h2 .tor-caution { font-size: 11px; }
+.tor-description { white-space: pre-line; }
+.tor-subheading { margin: 22px 0 12px; font-size: 14px; font-weight: 800; color: var(--ink); }
+.tor-detail-list { margin: 0; padding: 0; list-style: none; display: grid; gap: 10px; }
+.tor-detail-list li { padding-left: 22px; position: relative; color: var(--ink); font-size: 14px; line-height: 1.6; }
+.tor-detail-list li::before { content: "•"; position: absolute; left: 6px; color: var(--blue); font-weight: 800; }
+.tor-ai-callout__group { display: grid; gap: 8px; }
+.tor-ai-callout__group h3 { margin: 0; font-size: 14px; font-weight: 800; color: var(--ink); }
+.key-dates-list { margin: 0; padding: 0; list-style: none; }
+.key-dates-list__item { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 0; border-bottom: 1px solid var(--line); }
+.key-dates-list__item:last-child { border-bottom: 0; padding-bottom: 0; }
+.key-dates-list__item:first-child { padding-top: 0; }
+.key-dates-list__item div { display: grid; gap: 2px; }
+.key-dates-list__item strong { font-size: 14px; color: var(--ink); }
+.key-dates-list__item div span { font-size: 13px; color: var(--muted); }
+.key-dates-list__badge { padding: 4px 10px; border-radius: 6px; font-size: 12px; font-weight: 700; white-space: nowrap; color: var(--blue); background: var(--blue-light); }
+.key-dates-list__badge--past { color: #5b6779; background: #eef1f6; }
+.key-dates-list__badge--urgent { color: #b45309; background: #ffedd5; }
+.key-dates-list__item--urgent strong { color: #b45309; }
+.tor-source-link { display: inline-flex; align-items: center; gap: 5px; color: var(--blue); word-break: break-all; }
+.tor-document-list { margin: 0; padding: 0; list-style: none; display: grid; gap: 12px; }
+.tor-document-list li { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 14px; background: var(--surface); border-radius: 10px; }
+.tor-document-list li > div:first-child { display: grid; gap: 2px; min-width: 0; }
+.tor-document-list strong { font-size: 13px; color: var(--ink); overflow-wrap: anywhere; }
+.tor-document-list li > div:first-child span { font-size: 12px; color: var(--muted); }
+.tor-document-list__actions { display: flex; align-items: center; gap: 14px; flex-shrink: 0; font-size: 12px; color: var(--muted); }
+.tor-document-list__actions a { display: inline-flex; align-items: center; gap: 4px; color: var(--blue); font-weight: 700; }
+
 .tor-sidebar-card { padding: 24px; display: grid; gap: 16px; background: var(--white); border: 1px solid var(--line); border-radius: 16px; }
 .tor-sidebar-card h2 { margin: 0; font-size: 16px; font-weight: 800; color: var(--ink); }
 .tor-sidebar-card__meta-title { display: flex; align-items: center; gap: 7px; }
@@ -462,6 +494,8 @@ button { cursor: pointer; }
   .tor-info-strip { grid-template-columns: 1fr; }
   .tor-requirement-table > div { flex-direction: column; gap: 4px; }
   .tor-requirement-table span:first-child { flex-basis: auto; }
+  .panel--detail { padding: 20px; }
+  .key-dates-list__item, .tor-document-list li { flex-direction: column; align-items: flex-start; gap: 8px; }
 }
 
 .search-page { background: #f7f9fc; }
