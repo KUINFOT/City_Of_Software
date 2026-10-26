@@ -9,6 +9,8 @@ import vendorProfileRoutes from './vendorProfile.routes';
 import adminUsersRoutes from './adminUsers.routes';
 import notificationRoutes from './notification.routes';
 import agencyRoutes from './agency.routes';
+import bookmarkRoutes from './bookmark.routes';
+import comparisonRoutes from './comparison.routes';
 import analyticsRoutes from './analytics.routes';
 
 const router = Router();
@@ -27,6 +29,8 @@ router.use('/vendor-profiles', vendorProfileRoutes);
 router.use('/admin', adminUsersRoutes);
 router.use('/notifications', notificationRoutes);
 router.use('/agencies', agencyRoutes);
+router.use('/bookmarks', bookmarkRoutes);
+router.use('/comparisons', comparisonRoutes);
 router.use('/analytics', analyticsRoutes);
 
 export default router;
