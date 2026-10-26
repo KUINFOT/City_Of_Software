@@ -1,12 +1,9 @@
 import { Router } from 'express';
-import { listBookmarks, removeBookmark, saveBookmark } from '../controllers/bookmark.controller';
-import { requireAuthenticated } from '../middleware/auth.middleware';
+import { listBookmarks } from '../controllers/bookmark.controller';
+import { requireVendor } from '../middleware/auth.middleware';
 
 const router = Router();
 
-router.use(requireAuthenticated);
-router.get('/', listBookmarks);
-router.post('/', saveBookmark);
-router.delete('/:torId', removeBookmark);
+router.get('/', requireVendor, listBookmarks);
 
 export default router;

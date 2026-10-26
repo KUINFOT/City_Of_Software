@@ -23,7 +23,12 @@ function optional(name: string, fallback = ''): string {
 export const env = {
   port: Number(process.env.PORT ?? 4000),
   nodeEnv: optional('NODE_ENV', 'development'),
-  corsOrigin: optional('CORS_ORIGIN', 'http://localhost:3000'),
+  // Accept a comma-separated allowlist so a local Next dev server can move
+  // to its fallback port without turning a browser request into a CORS error.
+  corsOrigins: optional('CORS_ORIGIN', 'http://localhost:3000')
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean),
   mongodbUri: required('MONGODB_URI'),
   appUrl: optional('APP_URL', 'http://localhost:3000'),
   publicApiUrl: optional('PUBLIC_API_URL', 'http://localhost:4000/api'),

@@ -14,6 +14,7 @@ const initialSearches = [
 
 const emptyProfile: VendorProfile = { organizationType: "company", companyName: "", techStack: [], serviceCategories: [], certifications: [], pastContracts: [], notificationPrefs: { frequency: "instant" }, interests: { agencyIds: [], keywords: [] } };
 type ProfileConfirmation = { kind: "save" } | { kind: "discard" } | { kind: "remove-contract"; index: number };
+type SettingsTab = "account" | "seller" | "notifications";
 
 const completenessLabels: Record<ProfileCompleteness["missingFields"][number]["key"], string> = {
   organizationType: "ประเภทองค์กร", companyName: "ชื่อบริษัท", techStack: "เทคโนโลยีที่ใช้", serviceCategories: "หมวดหมู่บริการ",
@@ -67,6 +68,7 @@ export default function SettingsPage() {
   const [profile, setProfile] = useState<VendorProfile>({ ...emptyProfile, companyName: user?.organization ?? "" });
   const [completeness, setCompleteness] = useState<ProfileCompleteness | null>(null);
   const [agencies, setAgencies] = useState<Agency[]>([]);
+  const [activeTab, setActiveTab] = useState<SettingsTab>("account");
 
   useEffect(() => {
     if (!user?.id || !token || user.role !== "vendor") return;
@@ -82,6 +84,16 @@ export default function SettingsPage() {
   }, [token, user?.id, user?.role]);
 
   useEffect(() => { if (user?.role === "vendor") getAgencies().then(setAgencies).catch(() => setAgencies([])); }, [user?.role]);
+
+  useEffect(() => {
+    const setTabFromHash = () => {
+      if (window.location.hash === "#notifications" || window.location.hash === "#api") setActiveTab("notifications");
+      if (window.location.hash === "#profile" && user?.role === "vendor") setActiveTab("seller");
+    };
+    setTabFromHash();
+    window.addEventListener("hashchange", setTabFromHash);
+    return () => window.removeEventListener("hashchange", setTabFromHash);
+  }, [user?.role]);
 
   function validateProfile(): string {
     if (profile.organizationType === "company" && !profile.companyName.trim()) return "โปรดระบุชื่อบริษัท";
@@ -132,6 +144,7 @@ export default function SettingsPage() {
   function startEditing() {
     setSaved(false);
     setProfileError("");
+    setActiveTab("seller");
     setEditing(true);
   }
 
@@ -163,122 +176,65 @@ export default function SettingsPage() {
 
   return (
     <AccountShell>
-      <header className="settings-header">
-        <div><h1>ตั้งค่าบัญชีและความสนใจ</h1><p>จัดการโปรไฟล์เทคโนโลยี การแจ้งเตือนจากเขต และข้อมูลบัญชีของคุณ</p></div>
+      <header className="settings-header profile-workspace-header">
+        <div><p className="settings-kicker">ACCOUNT MANAGEMENT</p><h1>บัญชีและโปรไฟล์ผู้ขาย</h1><p>จัดการข้อมูลบัญชี คุณสมบัติองค์กร และการแจ้งเตือนของคุณในที่เดียว</p></div>
         <div className="settings-save-action">{editing ? <div className="settings-edit-actions"><button className="button button--secondary" type="button" onClick={() => hasUnsavedChanges ? setConfirmation({ kind: "discard" }) : setEditing(false)} disabled={saving}>ยกเลิก</button><button className="button button--primary" type="button" onClick={requestSave} disabled={saving || !hasUnsavedChanges}>{saving ? "กำลังบันทึก…" : "บันทึกการแก้ไข"}</button></div> : <button className="button button--primary" type="button" onClick={startEditing} disabled={user?.role !== "vendor"}>แก้ไขโปรไฟล์</button>}{editing && !hasUnsavedChanges && <p className="settings-save-hint">แก้ไขข้อมูลอย่างน้อย 1 รายการเพื่อบันทึกเวอร์ชันใหม่</p>}{saved && <p role="status">บันทึกโปรไฟล์เวอร์ชันใหม่แล้ว</p>}{profileError && <p className="register-error" role="alert">{profileError}</p>}</div>
       </header>
-      <div className="settings-grid">
-        <section className="profile-panel">
-          <div className="profile-cover" /><div className="avatar avatar--large">{initials}</div>
-          <h2>{user?.name ?? "บัญชีของคุณ"}</h2><p>{roleLabel}, {user?.organization ?? "City of Software"}</p><span className="verified">{user?.role === "vendor" ? "โปรไฟล์ผู้ขาย" : "บัญชีแพลตฟอร์ม"}</span><hr />
-          <div className="org-details"><h3>รายละเอียดโปรไฟล์</h3><small>อีเมล</small><strong>{user?.email ?? "—"}</strong><small>องค์กร</small><strong>{user?.organization ?? "—"}</strong><small>บทบาทบนแพลตฟอร์ม</small><strong>{roleLabel}</strong>{user?.role === "vendor" && <><small>เวอร์ชันความสามารถ</small><strong>v{profile.profileVersion ?? 1}</strong></>}</div>
-        </section>
-        <div className="settings-main">
-          {user?.role === "vendor" && <section className="settings-card" id="profile">
-            <h2>โปรไฟล์คุณสมบัติผู้ขาย</h2>
-            <p>ข้อมูลทั้งหมดเป็น <strong>ข้อมูลที่ผู้ใช้ระบุเอง</strong> การบันทึกจะสร้างเวอร์ชันใหม่ และมีผลต่อการจับคู่ที่คำนวณหลังจากนั้นเท่านั้น</p>
-            {completeness && <section className="profile-completeness" aria-label="ความครบถ้วนของโปรไฟล์">
-              <div className="profile-completeness__header"><div><strong>โปรไฟล์ครบ {completeness.score}%</strong><p>ข้อมูลที่ครบช่วยให้ระบบจับคู่โครงการใหม่ได้แม่นยำขึ้น</p></div><span>{completeness.earnedWeight}/{completeness.totalWeight} คะแนน</span></div>
-              <div className="profile-completeness__bar" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={completeness.score}><span style={{ width: `${completeness.score}%` }} /></div>
-              {completeness.missingFields.length > 0 ? <div className="profile-completeness__missing"><strong>ข้อมูลที่ยังขาด</strong><ul>{completeness.missingFields.map((field) => <li key={field.key}>{completenessLabels[field.key]}</li>)}</ul></div> : <p className="profile-completeness__complete">โปรไฟล์ของคุณมีข้อมูลครบสำหรับการจับคู่แล้ว</p>}
-            </section>}
-            <p className={editing ? "profile-edit-state profile-edit-state--editing" : "profile-edit-state"}>{editing ? "กำลังแก้ไขอยู่ — ตรวจทานข้อมูล แล้วกดบันทึกเพื่อสร้างเวอร์ชันใหม่" : "โหมดอ่านอย่างเดียว — กด “แก้ไขโปรไฟล์” เมื่อต้องการเปลี่ยนข้อมูล"}</p>
-            <fieldset className="profile-editor" disabled={!editing || saving}>
-            <div className="form-grid">
-              <label className="form-field">ประเภทองค์กร<select value={profile.organizationType} disabled={saving} onChange={(event) => setProfile((current) => ({ ...current, organizationType: event.target.value as "company" | "freelancer" }))}><option value="company">บริษัท</option><option value="freelancer">ฟรีแลนซ์</option></select></label>
-              {profile.organizationType === "company" && <label className="form-field">ชื่อบริษัท<input value={profile.companyName} disabled={saving} required onChange={(event) => setProfile((current) => ({ ...current, companyName: event.target.value }))} /></label>}
-              <label className="form-field">ประสบการณ์ (ปี)<input type="number" min="0" max="100" disabled={saving} value={profile.yearsExperience ?? ""} onChange={(event) => setProfile((current) => ({ ...current, yearsExperience: event.target.value ? Number(event.target.value) : undefined }))} /></label>
-              <label className="form-field">จำนวนสมาชิกทีม<input type="number" min="1" disabled={saving} value={profile.teamSize ?? ""} onChange={(event) => setProfile((current) => ({ ...current, teamSize: event.target.value ? Number(event.target.value) : undefined }))} /></label>
-            </div>
-            <label className="form-field">เทคโนโลยีที่ใช้ (คั่นด้วยจุลภาค)<input value={profile.techStack.join(", ")} disabled={saving} onChange={(event) => setProfile((current) => ({ ...current, techStack: event.target.value.split(",").map((item) => item.trim()).filter(Boolean) }))} placeholder="React, Node.js, MongoDB" /></label>
-            <label className="form-field">หมวดหมู่บริการ (คั่นด้วยจุลภาค)<input value={profile.serviceCategories.join(", ")} disabled={saving} onChange={(event) => setProfile((current) => ({ ...current, serviceCategories: event.target.value.split(",").map((item) => item.trim()).filter(Boolean) }))} placeholder="เว็บแอปพลิเคชัน, วิเคราะห์ข้อมูล" /></label>
-            <label className="form-field">ใบรับรอง (คั่นด้วยจุลภาค)<input value={profile.certifications.map((item) => item.name).join(", ")} disabled={saving} onChange={(event) => setProfile((current) => ({ ...current, certifications: event.target.value.split(",").map((name) => name.trim()).filter(Boolean).map((name) => ({ name, issuer: "" })) }))} placeholder="ISO 27001, AWS Certified" /></label>
-            <div className="settings-card__title"><div><h3>ผลงานสัญญาที่ผ่านมา</h3><p>มูลค่ารวมจะคำนวณจากรายการด้านล่าง</p></div><button type="button" disabled={saving} onClick={() => setProfile((current) => ({ ...current, pastContracts: [...current.pastContracts, { agencyName: "", projectTitle: "", contractValueThb: 0 }] }))}><Plus size={15} /> เพิ่มผลงาน</button></div>
-            {profile.pastContracts.map((contract, index) => <div className="form-grid" key={index}>
-              <label className="form-field">ชื่อโครงการ<input value={contract.projectTitle} disabled={saving} onChange={(event) => updateContract(index, { projectTitle: event.target.value })} /></label>
-              <label className="form-field">หน่วยงาน<input value={contract.agencyName} disabled={saving} onChange={(event) => updateContract(index, { agencyName: event.target.value })} /></label>
-              <label className="form-field">มูลค่า (บาท)<input type="number" min="0" value={contract.contractValueThb} disabled={saving} onChange={(event) => updateContract(index, { contractValueThb: Number(event.target.value) })} /></label>
-              <label className="form-field">ปี<input type="number" min="1900" max="2100" value={contract.year ?? ""} disabled={saving} onChange={(event) => updateContract(index, { year: event.target.value ? Number(event.target.value) : undefined })} /></label>
-              <button className="button button--secondary" type="button" disabled={saving} onClick={() => setConfirmation({ kind: "remove-contract", index })}><Trash2 size={15} /> ลบรายการ</button>
-            </div>)}
-            <p className="settings-card__summary">มูลค่าสัญญารวม: <strong>{new Intl.NumberFormat("th-TH", { style: "currency", currency: "THB", maximumFractionDigits: 0 }).format(profile.pastContracts.reduce((total, contract) => total + (Number.isFinite(contract.contractValueThb) ? contract.contractValueThb : 0), 0))}</strong></p>
+
+      <section className="profile-overview" aria-label="สรุปบัญชี">
+        <div className="avatar avatar--large profile-overview__avatar">{initials}</div>
+        <div className="profile-overview__identity"><small>เจ้าของบัญชี</small><strong>{user?.name ?? "บัญชีของคุณ"}</strong><span>{user?.email ?? "—"}</span><em>บัญชีใช้งานอยู่</em></div>
+        <div className="profile-overview__organization"><small>องค์กร</small><strong>{(user?.organization ?? profile.companyName) || "—"}</strong><small>บทบาทบนแพลตฟอร์ม</small><span>{roleLabel}</span></div>
+        {user?.role === "vendor" && <div className="profile-score"><small>โปรไฟล์ผู้ขาย</small><strong>{completeness?.score ?? 0}%</strong><i><span style={{ width: `${completeness?.score ?? 0}%` }} /></i></div>}
+      </section>
+
+      <nav className="profile-tabs" role="tablist" aria-label="หมวดการตั้งค่าบัญชี">
+        <button type="button" role="tab" aria-selected={activeTab === "account"} className={activeTab === "account" ? "active" : ""} onClick={() => setActiveTab("account")}>ข้อมูลส่วนตัว</button>
+        {user?.role === "vendor" && <button type="button" role="tab" aria-selected={activeTab === "seller"} className={activeTab === "seller" ? "active" : ""} onClick={() => setActiveTab("seller")}>โปรไฟล์ผู้ขาย</button>}
+        <button type="button" role="tab" aria-selected={activeTab === "notifications"} className={activeTab === "notifications" ? "active" : ""} onClick={() => setActiveTab("notifications")}>การแจ้งเตือน</button>
+      </nav>
+
+      <section className="settings-card profile-tab-content" role="tabpanel">
+        {activeTab === "account" && <>
+          <div className="profile-tab-heading"><div><h2>ข้อมูลส่วนตัว</h2><p>ข้อมูลสำหรับระบุตัวตนและการเข้าสู่ระบบของบัญชีนี้</p></div><span>ACCOUNT OWNER</span></div>
+          <div className="account-detail-grid">
+            <div><small>ชื่อ-นามสกุล</small><strong>{user?.name ?? "—"}</strong></div><div><small>อีเมล</small><strong>{user?.email ?? "—"}</strong></div>
+            <div><small>บทบาทบัญชี</small><strong>{roleLabel}</strong></div><div><small>องค์กร</small><strong>{(user?.organization ?? profile.companyName) || "—"}</strong></div>
+          </div>
+          <p className="profile-footnote">การตั้งค่ารหัสผ่านและความปลอดภัยจัดการได้จากระบบยืนยันตัวตนของบัญชี</p>
+        </>}
+
+        {activeTab === "seller" && user?.role === "vendor" && <>
+          <div className="profile-tab-heading"><div><h2>คุณสมบัติผู้ขาย</h2><p>ข้อมูลที่ระบบใช้ประกอบการจับคู่ TOR และตรวจสอบคุณสมบัติ</p></div>{completeness && <span>โปรไฟล์ครบ {completeness.score}%</span>}</div>
+          {!editing ? <div className="seller-summary">
+            <article><h3>องค์กรและประสบการณ์</h3><dl><div><dt>ประเภทองค์กร</dt><dd>{profile.organizationType === "company" ? "บริษัท" : "ฟรีแลนซ์"}</dd></div><div><dt>ประสบการณ์</dt><dd>{profile.yearsExperience ?? "—"} ปี</dd></div><div><dt>ชื่อองค์กร</dt><dd>{profile.companyName || "—"}</dd></div></dl></article>
+            <article><h3>ความสามารถทางเทคนิค</h3><small>เทคโนโลยี</small><div className="profile-tags">{profile.techStack.length ? profile.techStack.map((item) => <span key={item}>{item}</span>) : <em>ยังไม่ระบุ</em>}</div><small>บริการและใบรับรอง</small><div className="profile-tags">{[...profile.serviceCategories, ...profile.certifications.map((item) => item.name)].length ? [...profile.serviceCategories, ...profile.certifications.map((item) => item.name)].map((item) => <span key={item}>{item}</span>) : <em>ยังไม่ระบุ</em>}</div></article>
+            <article className="seller-summary__contracts"><h3>ผลงานสัญญาที่ผ่านมา</h3><p>{profile.pastContracts.length ? `${profile.pastContracts.length} รายการ` : "ยังไม่มีข้อมูลผลงาน"}</p><strong>{new Intl.NumberFormat("th-TH", { style: "currency", currency: "THB", maximumFractionDigits: 0 }).format(profile.pastContracts.reduce((total, contract) => total + (Number.isFinite(contract.contractValueThb) ? contract.contractValueThb : 0), 0))}</strong></article>
+          </div> : <>
+            <p className="profile-edit-state profile-edit-state--editing">กำลังแก้ไขอยู่ — ตรวจทานข้อมูล แล้วกดบันทึกเพื่อสร้างเวอร์ชันใหม่</p>
+            <fieldset className="profile-editor" disabled={saving}>
+              <div className="form-grid"><label className="form-field">ประเภทองค์กร<select value={profile.organizationType} onChange={(event) => setProfile((current) => ({ ...current, organizationType: event.target.value as "company" | "freelancer" }))}><option value="company">บริษัท</option><option value="freelancer">ฟรีแลนซ์</option></select></label>{profile.organizationType === "company" && <label className="form-field">ชื่อบริษัท<input value={profile.companyName} required onChange={(event) => setProfile((current) => ({ ...current, companyName: event.target.value }))} /></label>}<label className="form-field">ประสบการณ์ (ปี)<input type="number" min="0" max="100" value={profile.yearsExperience ?? ""} onChange={(event) => setProfile((current) => ({ ...current, yearsExperience: event.target.value ? Number(event.target.value) : undefined }))} /></label><label className="form-field">จำนวนสมาชิกทีม<input type="number" min="1" value={profile.teamSize ?? ""} onChange={(event) => setProfile((current) => ({ ...current, teamSize: event.target.value ? Number(event.target.value) : undefined }))} /></label></div>
+              <label className="form-field">เทคโนโลยีที่ใช้ (คั่นด้วยจุลภาค)<input value={profile.techStack.join(", ")} onChange={(event) => setProfile((current) => ({ ...current, techStack: event.target.value.split(",").map((item) => item.trim()).filter(Boolean) }))} placeholder="React, Node.js, MongoDB" /></label>
+              <label className="form-field">หมวดหมู่บริการ (คั่นด้วยจุลภาค)<input value={profile.serviceCategories.join(", ")} onChange={(event) => setProfile((current) => ({ ...current, serviceCategories: event.target.value.split(",").map((item) => item.trim()).filter(Boolean) }))} placeholder="เว็บแอปพลิเคชัน, วิเคราะห์ข้อมูล" /></label>
+              <label className="form-field">ใบรับรอง (คั่นด้วยจุลภาค)<input value={profile.certifications.map((item) => item.name).join(", ")} onChange={(event) => setProfile((current) => ({ ...current, certifications: event.target.value.split(",").map((name) => name.trim()).filter(Boolean).map((name) => ({ name, issuer: "" })) }))} placeholder="ISO 27001, AWS Certified" /></label>
+              <div className="settings-card__title"><div><h3>ผลงานสัญญาที่ผ่านมา</h3><p>มูลค่ารวมจะคำนวณจากรายการด้านล่าง</p></div><button type="button" onClick={() => setProfile((current) => ({ ...current, pastContracts: [...current.pastContracts, { agencyName: "", projectTitle: "", contractValueThb: 0 }] }))}><Plus size={15} /> เพิ่มผลงาน</button></div>
+              {profile.pastContracts.map((contract, index) => <div className="form-grid" key={index}><label className="form-field">ชื่อโครงการ<input value={contract.projectTitle} onChange={(event) => updateContract(index, { projectTitle: event.target.value })} /></label><label className="form-field">หน่วยงาน<input value={contract.agencyName} onChange={(event) => updateContract(index, { agencyName: event.target.value })} /></label><label className="form-field">มูลค่า (บาท)<input type="number" min="0" value={contract.contractValueThb} onChange={(event) => updateContract(index, { contractValueThb: Number(event.target.value) })} /></label><label className="form-field">ปี<input type="number" min="1900" max="2100" value={contract.year ?? ""} onChange={(event) => updateContract(index, { year: event.target.value ? Number(event.target.value) : undefined })} /></label><button className="button button--secondary" type="button" onClick={() => setConfirmation({ kind: "remove-contract", index })}><Trash2 size={15} /> ลบรายการ</button></div>)}
             </fieldset>
-          </section>}
-          <section className="settings-card" id="notifications">
-            <h2>การประมวลผลและการแจ้งเตือนจาก AI</h2>
-            {user?.role === "vendor" && (
-              <div className="form-field" style={{ marginBottom: "1rem" }}>
-                <label htmlFor="notification-frequency">ความถี่ในการแจ้งเตือนเมื่อพบโครงการที่ตรงกับคุณ</label>
-                <select
-                  id="notification-frequency"
-                  disabled={saving}
-                  value={profile.notificationPrefs?.frequency ?? "instant"}
-                  onChange={(event) =>
-                    setProfile((current) => ({ ...current, notificationPrefs: { frequency: event.target.value as "instant" | "daily_digest" } }))
-                  }
-                >
-                  <option value="instant">แจ้งเตือนทันทีทุกครั้งที่พบโครงการที่ตรงกัน</option>
-                  <option value="daily_digest">สรุปรวมส่งวันละครั้ง</option>
-                </select>
-              </div>
-            )}
-            {user?.role === "vendor" && (
-              <div className="form-field" style={{ marginBottom: "1rem" }}>
-                <span>หน่วยงานที่ติดตามเพิ่มเติม (นอกเหนือจากการจับคู่โปรไฟล์)</span>
-                <div className="followed-agencies">
-                  {agencies.length === 0 ? (
-                    <p style={{ fontSize: "0.8rem", color: "#788498" }}>ยังไม่มีหน่วยงานให้เลือกติดตาม</p>
-                  ) : (
-                    agencies.map((agency) => {
-                      const checked = profile.interests?.agencyIds.includes(agency._id) ?? false;
-                      return (
-                        <label key={agency._id} className="followed-agency-option">
-                          <input
-                            type="checkbox"
-                            disabled={saving}
-                            checked={checked}
-                            onChange={(event) =>
-                              setProfile((current) => {
-                                const currentIds = current.interests?.agencyIds ?? [];
-                                const agencyIds = event.target.checked
-                                  ? [...currentIds, agency._id]
-                                  : currentIds.filter((id) => id !== agency._id);
-                                return { ...current, interests: { agencyIds, keywords: current.interests?.keywords ?? [] } };
-                              })
-                            }
-                          />
-                          {agency.name}
-                        </label>
-                      );
-                    })
-                  )}
-                </div>
-              </div>
-            )}
-            {user?.role === "vendor" && (
-              <label className="form-field" style={{ marginBottom: "1rem" }}>
-                คำสำคัญที่ติดตาม (คั่นด้วยจุลภาค)
-                <input
-                  disabled={saving}
-                  value={(profile.interests?.keywords ?? []).join(", ")}
-                  onChange={(event) =>
-                    setProfile((current) => ({
-                      ...current,
-                      interests: { agencyIds: current.interests?.agencyIds ?? [], keywords: event.target.value.split(",").map((item) => item.trim()).filter(Boolean) },
-                    }))
-                  }
-                  placeholder="น้ำท่วม, CCTV, ระบบระบายน้ำ"
-                />
-              </label>
-            )}
-            {notificationLabels.map(([title, description], index) => (
-              <div className="toggle-row" key={title}><Toggle checked={toggles[index]} onChange={() => setToggles((current) => current.map((value, i) => i === index ? !value : value))} /><div><strong>{title}</strong><p>{description}</p></div></div>
-            ))}
-          </section>
-          <section className="settings-card"><div className="settings-card__title"><h2>Saved Smart Searches</h2><button onClick={() => setSearches((current) => [...current, { title: "New Bangkok smart city opportunity", filter: "All BMA districts" }])}><Plus size={15} /> Add New Search</button></div>{searches.map((search, index) => <div className="saved-search" key={`${search.title}-${index}`}><div><strong>{search.title}</strong><p>Filters: {search.filter}</p></div><button aria-label={`Delete ${search.title}`} onClick={() => setSearches((current) => current.filter((_, i) => i !== index))}><Trash2 size={17} /></button></div>)}</section>
-          <section className="settings-card api-placeholder" id="api"><h2>การเข้าถึง API สำหรับนักพัฒนา</h2><p>การจัดการ API Key จะพร้อมใช้งานหลังโปรไฟล์ผู้ขายของคุณได้รับอนุมัติ</p></section>
-        </div>
-      </div>
+          </>}
+        </>}
+
+        {activeTab === "notifications" && <>
+          <div className="profile-tab-heading"><div><h2>การตั้งค่าการแจ้งเตือน</h2><p>เลือกวิธีรับข่าวสารเกี่ยวกับ TOR ที่เกี่ยวข้องและหน่วยงานที่ติดตาม</p></div><span>NOTIFICATIONS</span></div>
+          {user?.role === "vendor" && <fieldset className="profile-editor notification-editor" disabled={!editing || saving}>
+            <label className="form-field">ความถี่ในการแจ้งเตือน<select value={profile.notificationPrefs?.frequency ?? "instant"} onChange={(event) => setProfile((current) => ({ ...current, notificationPrefs: { frequency: event.target.value as "instant" | "daily_digest" } }))}><option value="instant">แจ้งเตือนทันทีทุกครั้งที่พบโครงการที่ตรงกัน</option><option value="daily_digest">สรุปรวมส่งวันละครั้ง</option></select></label>
+            <div className="form-field"><span>หน่วยงานที่ติดตามเพิ่มเติม</span><div className="followed-agencies">{agencies.length === 0 ? <p>ยังไม่มีหน่วยงานให้เลือกติดตาม</p> : agencies.map((agency) => { const checked = profile.interests?.agencyIds.includes(agency._id) ?? false; return <label key={agency._id} className="followed-agency-option"><input type="checkbox" checked={checked} onChange={(event) => setProfile((current) => { const currentIds = current.interests?.agencyIds ?? []; const agencyIds = event.target.checked ? [...currentIds, agency._id] : currentIds.filter((id) => id !== agency._id); return { ...current, interests: { agencyIds, keywords: current.interests?.keywords ?? [] } }; })} />{agency.name}</label>; })}</div></div>
+            <label className="form-field">คำสำคัญที่ติดตาม (คั่นด้วยจุลภาค)<input value={(profile.interests?.keywords ?? []).join(", ")} onChange={(event) => setProfile((current) => ({ ...current, interests: { agencyIds: current.interests?.agencyIds ?? [], keywords: event.target.value.split(",").map((item) => item.trim()).filter(Boolean) } }))} placeholder="น้ำท่วม, CCTV, ระบบระบายน้ำ" /></label>
+          </fieldset>}
+          <div className="notification-switches">{notificationLabels.map(([title, description], index) => <div className="toggle-row" key={title}><Toggle checked={toggles[index]} onChange={() => setToggles((current) => current.map((value, i) => i === index ? !value : value))} /><div><strong>{title}</strong><p>{description}</p></div></div>)}</div>
+          <div className="settings-card__title saved-searches-heading"><h3>การค้นหาที่บันทึกไว้</h3><button type="button" onClick={() => setSearches((current) => [...current, { title: "โครงการเมืองอัจฉริยะ", filter: "ทุกเขตในกรุงเทพมหานคร" }])}><Plus size={15} /> เพิ่มการค้นหา</button></div>{searches.map((search, index) => <div className="saved-search" key={`${search.title}-${index}`}><div><strong>{search.title}</strong><p>ตัวกรอง: {search.filter}</p></div><button aria-label={`ลบ ${search.title}`} onClick={() => setSearches((current) => current.filter((_, i) => i !== index))}><Trash2 size={17} /></button></div>)}
+          <section className="api-placeholder" id="api"><h3>การเข้าถึง API สำหรับนักพัฒนา</h3><p>การจัดการ API Key จะพร้อมใช้งานหลังโปรไฟล์ผู้ขายของคุณได้รับอนุมัติ</p></section>
+        </>}
+      </section>
       {confirmation && <div className="invite-backdrop" role="presentation" onMouseDown={() => setConfirmation(null)}><section className="role-confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="profile-confirm-title" onMouseDown={(event) => event.stopPropagation()}><p className="login-kicker">ยืนยันการดำเนินการ</p><h2 id="profile-confirm-title">{confirmation.kind === "save" ? "บันทึกการแก้ไขโปรไฟล์?" : confirmation.kind === "discard" ? "ยกเลิกการแก้ไข?" : "ลบผลงานสัญญารายการนี้?"}</h2><p>{confirmation.kind === "save" ? "การบันทึกจะสร้างโปรไฟล์เวอร์ชันใหม่ และใช้กับการจับคู่ที่คำนวณหลังจากนี้เท่านั้น" : confirmation.kind === "discard" ? "ข้อมูลที่แก้ไขแต่ยังไม่ได้บันทึกจะหายไป" : "รายการนี้จะถูกลบออกจากแบบฟอร์ม และจะมีผลเมื่อคุณบันทึกการแก้ไข"}</p><div className="role-confirm-dialog__actions"><button className="button button--secondary" type="button" onClick={() => setConfirmation(null)}>กลับไปตรวจทาน</button><button className={confirmation.kind === "remove-contract" ? "button role-confirm-dialog__danger" : "button button--primary"} type="button" onClick={confirmAction}>{confirmation.kind === "save" ? "ยืนยันและบันทึก" : confirmation.kind === "discard" ? "ยืนยันการยกเลิก" : "ยืนยันการลบ"}</button></div></section></div>}
     </AccountShell>
   );

@@ -1,3 +1,5 @@
+import { listSavedTors, saveTor, unsaveTor } from "./tor-api";
+
 export type BookmarkedProject = {
   torId: string;
   title: string;
@@ -9,36 +11,32 @@ export type BookmarkedProject = {
   savedAt: string;
 };
 
-const apiBaseUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000/api";
-
-async function request<T>(path: string, token: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${apiBaseUrl}${path}`, {
-    ...init,
-    headers: {
-      ...(init?.body ? { "Content-Type": "application/json" } : {}),
-      Authorization: `Bearer ${token}`,
-      ...init?.headers,
-    },
-  });
-  const payload = (await response.json().catch(() => null)) as (T & { error?: string }) | null;
-  if (!response.ok || payload === null) {
-    throw new Error(payload?.error ?? "ไม่สามารถเชื่อมต่อกับเซิร์ฟเวอร์ได้");
-  }
-  return payload;
-}
-
+/**
+ * The calendar, saved-projects, deadline and dashboard pages work with a flat
+ * BookmarkedProject. The saved-TOR API itself is the one in tor-api.ts
+ * (GET /bookmarks, PUT/DELETE /tors/:id/bookmark), which also carries private
+ * notes, so these are thin adapters over it rather than a second API.
+ */
 export async function listBookmarks(token: string): Promise<BookmarkedProject[]> {
-  const result = await request<{ bookmarks: BookmarkedProject[] }>("/bookmarks", token);
-  return result.bookmarks;
+  const saved = await listSavedTors(token);
+  return saved.map(({ savedAt, tor }) => ({
+    torId: tor._id,
+    title: tor.title,
+    agencyName: tor.agencyName,
+    projectType: tor.projectType ?? null,
+    budget: tor.budget?.amountThb ?? null,
+    deadline: tor.timeline?.submissionDeadline ?? null,
+    stage: tor.lifecycle?.stage ?? null,
+    savedAt,
+  }));
 }
 
-export function saveBookmark(token: string, torId: string): Promise<{ saved: true }> {
-  return request("/bookmarks", token, {
-    method: "POST",
-    body: JSON.stringify({ torId }),
-  });
+export async function saveBookmark(token: string, torId: string): Promise<{ saved: true }> {
+  await saveTor(torId, token);
+  return { saved: true };
 }
 
-export function removeBookmark(token: string, torId: string): Promise<{ saved: false }> {
-  return request(`/bookmarks/${encodeURIComponent(torId)}`, token, { method: "DELETE" });
+export async function removeBookmark(token: string, torId: string): Promise<{ saved: false }> {
+  await unsaveTor(torId, token);
+  return { saved: false };
 }

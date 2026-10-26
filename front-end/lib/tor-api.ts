@@ -105,6 +105,35 @@ export type QualificationMatchResult = {
 export type MatchReasonType = 'technology' | 'project_type' | 'budget' | 'agency' | 'keyword';
 export type MatchReason = { type: MatchReasonType; label: string; detail: string };
 export type MatchReasonsResult = { score: number; reasons: MatchReason[] };
+export type BookmarkState = { saved: boolean; torId: string };
+export type BookmarkNoteState = { torId: string; note: string };
+export type SavedTor = {
+  savedAt: string;
+  note?: string;
+  tor: Pick<TorSummary, '_id' | 'title' | 'agencyName' | 'budget' | 'timeline' | 'lifecycle'> & { projectType?: string | null };
+};
+export type ComparisonTor = {
+  _id: string;
+  title: string;
+  agencyName: string;
+  budget: { amountThb: number | null; isEstimated: boolean; vatBasis: 'inclusive' | 'exclusive' | 'unstated' } | null;
+  timeline: {
+    projectDurationDays: number | null;
+    contractStartDate: string | null;
+    contractEndDate: string | null;
+    submissionDeadline: string | null;
+  };
+  technologies: string[];
+  qualifications: {
+    minContractValueThb: number | null;
+    requiredCertifications: string[];
+    requiredExperienceYears: number | null;
+    items: string[];
+  } | null;
+  evaluationCriteria: Array<{ criterion: string; weightPercent: number | null }>;
+  deliverables: string[];
+  source: { sourceUrl: string | null; discoveredAt: string | null } | null;
+};
 
 const apiBaseUrl = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000/api';
 
@@ -137,4 +166,36 @@ export function getQualificationMatch(id: string, token: string): Promise<Qualif
 
 export function getMatchReasons(id: string, token: string): Promise<MatchReasonsResult> {
   return request(`/tors/${id}/match-reasons`, { headers: { Authorization: `Bearer ${token}` } });
+}
+
+/** Make the current vendor's saved state for this TOR explicit and repeatable. */
+export function saveTor(id: string, token: string): Promise<BookmarkState> {
+  return request(`/tors/${id}/bookmark`, { method: 'PUT', headers: { Authorization: `Bearer ${token}` } });
+}
+
+/** Remove the current vendor's saved state for this TOR. */
+export function unsaveTor(id: string, token: string): Promise<BookmarkState> {
+  return request(`/tors/${id}/bookmark`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } });
+}
+
+export async function listSavedTors(token: string): Promise<SavedTor[]> {
+  const result = await request<{ bookmarks: SavedTor[] }>('/bookmarks', { headers: { Authorization: `Bearer ${token}` } });
+  return result.bookmarks;
+}
+
+export function updateSavedTorNote(id: string, note: string, token: string): Promise<BookmarkNoteState> {
+  return request(`/tors/${id}/bookmark/note`, {
+    method: 'PATCH',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ note }),
+  });
+}
+
+export async function previewTorComparison(torIds: string[], token: string): Promise<ComparisonTor[]> {
+  const result = await request<{ tors: ComparisonTor[] }>('/comparisons/preview', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ torIds }),
+  });
+  return result.tors;
 }

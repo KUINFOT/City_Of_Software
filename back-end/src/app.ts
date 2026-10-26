@@ -8,7 +8,7 @@ import { errorHandler, notFound } from './middleware/errorHandler';
 export function createApp() {
   const app = express();
 
-  app.use(cors({ origin: env.corsOrigin }));
+  app.use(cors({ origin: env.corsOrigins }));
   app.use(morgan('dev'));
   app.use(express.json());
   app.use(express.urlencoded({ extended: true }));

@@ -14,7 +14,9 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000/a
 const fieldNames = ["technology", "projectType", "agency"] as const;
 type FilterField = (typeof fieldNames)[number];
 type Filters = Record<FilterField, string[]>;
+type Availability = "available" | "all";
 type SearchFilters = Filters & {
+	availability: Availability;
 	status: string[];
 	budgetMin: string;
 	budgetMax: string;
@@ -37,7 +39,7 @@ type DocumentRecord = {
 const icons = [Monitor, Network, BarChart3, CircleHelp, Map];
 
 function emptyFilters(): SearchFilters {
-	return { technology: [], projectType: [], agency: [], status: [], budgetMin: "", budgetMax: "", publishedAfter: "", publishedBefore: "", deadlineAfter: "", deadlineBefore: "" };
+	return { technology: [], projectType: [], agency: [], availability: "available", status: [], budgetMin: "", budgetMax: "", publishedAfter: "", publishedBefore: "", deadlineAfter: "", deadlineBefore: "" };
 }
 
 function readFilters(params: URLSearchParams): SearchFilters {
@@ -46,6 +48,7 @@ function readFilters(params: URLSearchParams): SearchFilters {
 		return result;
 	}, emptyFilters());
 	filters.status = params.getAll("status");
+	filters.availability = params.get("availability") === "all" ? "all" : "available";
 	filters.budgetMin = params.get("budgetMin") ?? "";
 	filters.budgetMax = params.get("budgetMax") ?? "";
 	filters.publishedAfter = params.get("publishedAfter") ?? "";
@@ -53,6 +56,20 @@ function readFilters(params: URLSearchParams): SearchFilters {
 	filters.deadlineAfter = params.get("deadlineAfter") ?? "";
 	filters.deadlineBefore = params.get("deadlineBefore") ?? "";
 	return filters;
+}
+
+// The default ("available") is left out of the URL so existing links stay clean.
+function buildSearchParams(query: string, filters: SearchFilters, sort: SortOption): URLSearchParams {
+	const params = new URLSearchParams();
+	if (query.trim()) params.set("q", query.trim());
+	params.set("sort", sort);
+	fieldNames.forEach((field) => filters[field].forEach((value) => params.append(field, value)));
+	filters.status.forEach((value) => params.append("status", value));
+	(["budgetMin", "budgetMax", "publishedAfter", "publishedBefore", "deadlineAfter", "deadlineBefore"] as const).forEach((field) => {
+		if (filters[field]) params.set(field, filters[field]);
+	});
+	if (filters.availability === "all") params.set("availability", "all");
+	return params;
 }
 
 function formatDeadline(deadline: string | null | undefined): string {
@@ -154,14 +171,7 @@ export default function SearchPage() {
 	useEffect(() => {
 		if (!initialized) return;
 
-		const params = new URLSearchParams();
-		if (appliedQuery.trim()) params.set("q", appliedQuery.trim());
-		params.set("sort", appliedSort);
-		fieldNames.forEach((field) => appliedFilters[field].forEach((value) => params.append(field, value)));
-		appliedFilters.status.forEach((value) => params.append("status", value));
-		(["budgetMin", "budgetMax", "publishedAfter", "publishedBefore", "deadlineAfter", "deadlineBefore"] as const).forEach((field) => {
-			if (appliedFilters[field]) params.set(field, appliedFilters[field]);
-		});
+		const params = buildSearchParams(appliedQuery, appliedFilters, appliedSort);
 		setLoading(true);
 		fetch(`${API_BASE_URL}/documents?${params.toString()}`)
 			.then((response) => {
@@ -180,15 +190,8 @@ export default function SearchPage() {
 	}, [appliedFilters, appliedQuery, appliedSort, initialized]);
 
 	function applySearch(nextQuery: string, nextFilters: SearchFilters, nextSort = sort) {
-		const params = new URLSearchParams();
-		if (nextQuery.trim()) params.set("q", nextQuery.trim());
-		params.set("sort", nextSort);
-		fieldNames.forEach((field) => nextFilters[field].forEach((value) => params.append(field, value)));
-		nextFilters.status.forEach((value) => params.append("status", value));
-		(["budgetMin", "budgetMax", "publishedAfter", "publishedBefore", "deadlineAfter", "deadlineBefore"] as const).forEach((field) => {
-			if (nextFilters[field]) params.set(field, nextFilters[field]);
-		});
-		window.history.replaceState(null, "", `${window.location.pathname}${params.toString() ? `?${params}` : ""}`);
+		const params = buildSearchParams(nextQuery, nextFilters, nextSort);
+		window.history.replaceState(null, "", `${window.location.pathname}?${params}`);
 		setQuery(nextQuery);
 		setFilters(nextFilters);
 		setAppliedQuery(nextQuery);
@@ -217,14 +220,7 @@ export default function SearchPage() {
 	}
 
 	function handleSortChange(nextSort: SortOption) {
-		const params = new URLSearchParams();
-		if (appliedQuery.trim()) params.set("q", appliedQuery.trim());
-		params.set("sort", nextSort);
-		fieldNames.forEach((field) => appliedFilters[field].forEach((value) => params.append(field, value)));
-		appliedFilters.status.forEach((value) => params.append("status", value));
-		(["budgetMin", "budgetMax", "publishedAfter", "publishedBefore", "deadlineAfter", "deadlineBefore"] as const).forEach((field) => {
-			if (appliedFilters[field]) params.set(field, appliedFilters[field]);
-		});
+		const params = buildSearchParams(appliedQuery, appliedFilters, nextSort);
 		window.history.replaceState(null, "", `${window.location.pathname}?${params}`);
 		setSort(nextSort);
 		setAppliedSort(nextSort);
@@ -249,6 +245,17 @@ export default function SearchPage() {
 			<main className="results-layout">
 				<aside className="filters-panel" aria-label="Tender filters">
 					<div className="filters-heading"><strong>Filters</strong><button type="button" onClick={clearFilters}>Clear All</button></div>
+					<fieldset className="filter-group">
+						<legend>Show TORs</legend>
+						<label className="filter-option">
+							<input type="radio" name="availability" checked={filters.availability === "available"} onChange={() => updateField("availability", "available")} />
+							<span>Currently available</span>
+						</label>
+						<label className="filter-option">
+							<input type="radio" name="availability" checked={filters.availability === "all"} onChange={() => updateField("availability", "all")} />
+							<span>All TORs (including closed)</span>
+						</label>
+					</fieldset>
 					<FilterGroup title="Technology Category" field="technology" options={availableFilters.technology} selected={filters.technology} onChange={toggleFilter} />
 					<FilterGroup title="Project Type" field="projectType" options={availableFilters.projectType} selected={filters.projectType} onChange={toggleFilter} />
 					<FilterGroup title="Agency" field="agency" options={availableFilters.agency} selected={filters.agency} onChange={toggleFilter} />
