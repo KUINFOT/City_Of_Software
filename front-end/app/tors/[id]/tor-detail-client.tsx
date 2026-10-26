@@ -390,11 +390,8 @@ export function TorDetailClient() {
                   <Download size={16} />ไม่มีเอกสารต้นฉบับให้ดาวน์โหลด
                 </button>
               )}
-              <button className="tor-action-button" type="button" disabled title="ฟีเจอร์นี้จะเปิดให้ใช้งานเร็วๆ นี้">
-                บันทึกโครงการ<span className="tor-coming-soon">เร็วๆ นี้</span>
-              </button>
               <button className="tor-action-button" type="button" onClick={() => { void toggleBookmark(); }} disabled={bookmarkBusy}>
-                {isBookmarked ? <BookmarkCheck size={16} /> : <Bookmark size={16} />}
+                <Bookmark size={16} />
                 {isBookmarked ? "บันทึก TOR แล้ว" : "บันทึก TOR"}
               </button>
               {bookmarkError && <p className="bookmark-error" role="alert">{bookmarkError}</p>}

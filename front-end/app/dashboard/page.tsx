@@ -2,107 +2,346 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { Bell, Clock3, FileText, Sparkles } from "lucide-react";
+import { Bell, Bookmark, BookmarkCheck, CalendarClock, Sparkles } from "lucide-react";
 import { AccountShell } from "@/components/account-shell";
 import { AccountMenu } from "@/components/account-menu";
 import { useAuth } from "@/components/auth-provider";
+import { BookmarkedProject, listBookmarks, removeBookmark, saveBookmark } from "@/lib/bookmarks-api";
 import { getNotifications, VendorNotification } from "@/lib/notifications-api";
+import { listTors, TorSummary } from "@/lib/tor-api";
 import { getVendorProfile, ProfileCompleteness } from "@/lib/vendor-profile";
 
-const STAGE_LABEL: Record<string, string> = {
-  comment_stage: "ช่วงรับฟังความคิดเห็น",
-  announcement_stage: "ประกาศอย่างเป็นทางการ",
-};
+type DeadlineProject = TorSummary & { daysRemaining: number };
 
-function formatThb(value: number | null) {
-  return value == null ? "ไม่ระบุ" : `฿ ${new Intl.NumberFormat("th-TH").format(value)}`;
+function differenceInUtcDays(deadline: string, today: Date): number | null {
+  const date = new Date(`${deadline.slice(0, 10)}T00:00:00Z`);
+  if (Number.isNaN(date.getTime())) return null;
+  const deadlineDay = Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate());
+  const todayDay = Date.UTC(today.getFullYear(), today.getMonth(), today.getDate());
+  return Math.floor((deadlineDay - todayDay) / 86_400_000);
 }
 
-function formatDeadline(value: string | null) {
-  return value ? new Date(value).toLocaleDateString("th-TH", { year: "numeric", month: "long", day: "numeric" }) : "ไม่ระบุ";
+function formatBudget(value: number | null | undefined) {
+  return value == null ? "Not specified" : `฿${new Intl.NumberFormat("th-TH").format(value)}`;
+}
+
+function formatDeadline(value: string | null | undefined) {
+  return value
+    ? new Date(value).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" })
+    : "Not specified";
+}
+
+function formatDaysRemaining(days: number) {
+  if (days === 0) return "Due today";
+  if (days === 1) return "1 day left";
+  return `${days} days left`;
+}
+
+function matchPercentage(score: number | null) {
+  if (score == null) return null;
+  return `${Math.round(score <= 1 ? score * 100 : score)}% Match`;
+}
+
+function toBookmarkedProject(project: TorSummary | VendorNotification): BookmarkedProject {
+  if ("torId" in project) {
+    return {
+      torId: project.torId,
+      title: project.torTitle,
+      agencyName: project.agencyName,
+      projectType: null,
+      budget: project.budgetThb,
+      deadline: project.submissionDeadline,
+      stage: project.type,
+      savedAt: new Date().toISOString(),
+    };
+  }
+
+  return {
+    torId: project._id,
+    title: project.title,
+    agencyName: project.agencyName,
+    projectType: null,
+    budget: project.budget?.amountThb ?? null,
+    deadline: project.timeline?.submissionDeadline ?? null,
+    stage: project.lifecycle?.stage ?? null,
+    savedAt: new Date().toISOString(),
+  };
 }
 
 export default function DashboardPage() {
   const { user, token } = useAuth();
   const firstName = user?.name.split(" ")[0] ?? "คุณ";
-
+  const [bookmarks, setBookmarks] = useState<BookmarkedProject[]>([]);
   const [matches, setMatches] = useState<VendorNotification[]>([]);
-  const [matchesLoading, setMatchesLoading] = useState(true);
+  const [deadlines, setDeadlines] = useState<DeadlineProject[]>([]);
   const [completeness, setCompleteness] = useState<ProfileCompleteness | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [busyIds, setBusyIds] = useState<Set<string>>(new Set());
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!token || user?.role !== "vendor") {
-      setMatchesLoading(false);
+    if (!token) {
+      setLoading(false);
       return;
     }
+    setLoading(true);
     let cancelled = false;
-    getNotifications(token)
-      .then((result) => { if (!cancelled) setMatches(result); })
-      .catch(() => { if (!cancelled) setMatches([]); })
-      .finally(() => { if (!cancelled) setMatchesLoading(false); });
+
+    Promise.allSettled([
+      listBookmarks(token),
+      user?.role === "vendor" ? getNotifications(token) : Promise.resolve([]),
+      listTors(200),
+    ]).then(([bookmarkResult, matchResult, torResult]) => {
+      if (cancelled) return;
+      const errors: string[] = [];
+
+      if (bookmarkResult.status === "fulfilled") {
+        setBookmarks(bookmarkResult.value);
+      } else {
+        errors.push(bookmarkResult.reason instanceof Error ? bookmarkResult.reason.message : "Unable to load saved projects.");
+      }
+
+      if (matchResult.status === "fulfilled") {
+        const seenTorIds = new Set<string>();
+        setMatches([...matchResult.value]
+          .sort((a, b) => (b.matchScore ?? -1) - (a.matchScore ?? -1))
+          .filter((match) => {
+            if (seenTorIds.has(match.torId)) return false;
+            seenTorIds.add(match.torId);
+            return true;
+          })
+          .slice(0, 3));
+      } else {
+        errors.push(matchResult.reason instanceof Error ? matchResult.reason.message : "Unable to load AI recommendations.");
+      }
+
+      if (torResult.status === "fulfilled") {
+        const today = new Date();
+        const upcoming = torResult.value.flatMap((tor) => {
+          const deadline = tor.timeline?.submissionDeadline;
+          if (!deadline) return [];
+          const daysRemaining = differenceInUtcDays(deadline, today);
+          return daysRemaining !== null && daysRemaining >= 0 && daysRemaining <= 14
+            ? [{ ...tor, daysRemaining }]
+            : [];
+        });
+        upcoming.sort((a, b) => a.daysRemaining - b.daysRemaining);
+        setDeadlines(upcoming.slice(0, 3));
+      } else {
+        errors.push(torResult.reason instanceof Error ? torResult.reason.message : "Unable to load upcoming deadlines.");
+      }
+
+      setError(errors.length > 0 ? errors.join(" ") : null);
+    }).finally(() => {
+      if (!cancelled) setLoading(false);
+    });
+
     return () => { cancelled = true; };
   }, [token, user?.role]);
 
   useEffect(() => {
     if (!user?.id || !token || user.role !== "vendor") return;
-    getVendorProfile(user.id, token).then((result) => setCompleteness(result.completeness)).catch(() => setCompleteness(null));
+    let cancelled = false;
+    getVendorProfile(user.id, token)
+      .then((profile) => { if (!cancelled) setCompleteness(profile.completeness); })
+      .catch((requestError: unknown) => {
+        if (!cancelled) setError(requestError instanceof Error ? requestError.message : "Unable to load profile completeness.");
+      });
+    return () => { cancelled = true; };
   }, [token, user?.id, user?.role]);
+
+  async function toggleBookmark(project: BookmarkedProject) {
+    if (!token) return;
+    setBusyIds((current) => new Set(current).add(project.torId));
+    setError(null);
+    try {
+      if (bookmarks.some((bookmark) => bookmark.torId === project.torId)) {
+        await removeBookmark(token, project.torId);
+        setBookmarks((current) => current.filter((bookmark) => bookmark.torId !== project.torId));
+      } else {
+        await saveBookmark(token, project.torId);
+        setBookmarks((current) => [project, ...current]);
+      }
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Unable to update saved projects.");
+    } finally {
+      setBusyIds((current) => {
+        const next = new Set(current);
+        next.delete(project.torId);
+        return next;
+      });
+    }
+  }
+
+  const bookmarkedIds = new Set(bookmarks.map((bookmark) => bookmark.torId));
 
   return (
     <AccountShell>
       <header className="account-header">
-        <div><h1>ยินดีต้อนรับกลับ, {firstName}</h1><p>{user?.organization ?? "องค์กรของคุณ"} · {user?.role === "vendor" ? "บัญชีผู้ขาย" : `บัญชี ${user?.role}`}</p></div>
-        <div className="profile-actions"><button aria-label="การแจ้งเตือน"><Bell size={18} /></button><AccountMenu compact /></div>
+        <div>
+          <h1>ยินดีต้อนรับกลับ, {firstName}</h1>
+          <p>{user?.organization ?? "องค์กรของคุณ"} · {user?.role === "vendor" ? "บัญชีผู้ขาย" : `บัญชี ${user?.role}`}</p>
+        </div>
+        <div className="profile-actions">
+          <button type="button" aria-label="การแจ้งเตือน"><Bell size={18} /></button>
+          <AccountMenu compact />
+        </div>
       </header>
 
-      <section className="metrics-grid">
-        <article><small>โครงการที่ AI จับคู่ได้</small><strong className="blue">18 โครงการ</strong><p>3 โครงการใกล้ถึงกำหนดส่งในสัปดาห์นี้</p></article>
-        <article><small>โครงการที่บันทึกไว้</small><strong className="orange">7 โครงการ</strong><p>1 เอกสาร TOR มีการแก้ไข</p></article>
-        <article><small>การค้นหาที่บันทึกไว้</small><strong className="green">การแจ้งเตือน 4 รายการ</strong><p>น้ำท่วม ระบบระบายน้ำ ควบคุมจราจร</p></article>
-      </section>
-
       {user?.role === "vendor" && completeness && completeness.missingFields.length > 0 && <section className="dashboard-completeness-prompt" aria-label="ข้อมูลโปรไฟล์ที่ยังขาด">
-        <div><p>โปรไฟล์คุณครบ {completeness.score}%</p><h2>เพิ่มข้อมูลอีก {completeness.missingFields.length} รายการ เพื่อรับการจับคู่ที่ตรงขึ้น</h2><span>ยังขาด: {completeness.missingFields.map((field) => ({ organizationType: "ประเภทองค์กร", companyName: "ชื่อบริษัท", techStack: "เทคโนโลยี", serviceCategories: "หมวดหมู่บริการ", yearsExperience: "ประสบการณ์", certifications: "ใบรับรอง", pastContracts: "ผลงานที่ผ่านมา" })[field.key]).join(" · ")}</span></div>
+        <div>
+          <p>โปรไฟล์คุณครบ {completeness.score}%</p>
+          <h2>เพิ่มข้อมูลอีก {completeness.missingFields.length} รายการ เพื่อรับการจับคู่ที่ตรงขึ้น</h2>
+          <span>ยังขาด: {completeness.missingFields.map((field) => ({
+            organizationType: "ประเภทองค์กร",
+            companyName: "ชื่อบริษัท",
+            techStack: "เทคโนโลยี",
+            serviceCategories: "หมวดหมู่บริการ",
+            yearsExperience: "ประสบการณ์",
+            certifications: "ใบรับรอง",
+            pastContracts: "ผลงานที่ผ่านมา",
+          })[field.key]).join(" · ")}</span>
+        </div>
         <Link className="button button--primary" href="/settings#profile">เติมข้อมูลโปรไฟล์</Link>
       </section>}
 
-      <section className="dashboard-section" id="recommendations">
-        <div className="section-title"><div><h2>TOR ที่ AI แนะนำตามโปรไฟล์</h2><span>รายการใหม่</span></div><a href="/settings#notifications">ตั้งค่าความสนใจ</a></div>
-        {user?.role !== "vendor" ? (
-          <p className="key-dates-empty">การแนะนำโครงการใช้ได้เฉพาะบัญชีผู้ขาย</p>
-        ) : matchesLoading ? (
-          <p className="key-dates-empty">กำลังโหลดโครงการที่ตรงกับโปรไฟล์...</p>
-        ) : matches.length === 0 ? (
-          <p className="key-dates-empty">ยังไม่มีโครงการที่ตรงกับโปรไฟล์ของคุณ — ลองปรับความสนใจในหน้าตั้งค่า</p>
+      {error && <p className="dashboard-error" role="alert">{error}</p>}
+
+      <section className="dashboard-feature-section" aria-labelledby="saved-projects-heading">
+        <div className="dashboard-feature-section__heading">
+          <div>
+            <h2 id="saved-projects-heading">Bookmarked Projects</h2>
+          </div>
+          <Link href="/saved-projects">Show All</Link>
+        </div>
+        {loading ? (
+          <p className="dashboard-feature-state">Loading saved projects…</p>
+        ) : bookmarks.length === 0 ? (
+          <div className="dashboard-feature-state dashboard-feature-state--empty">
+            <Bookmark size={20} />
+            <p>No saved projects yet.</p>
+            <Link href="/browse-tors">Browse TORs</Link>
+          </div>
         ) : (
-          <div className="match-grid">
-            {matches.map((match) => (
-              <article className="match-card" key={match._id}>
-                <div className="match-card__top">
-                  <span><Sparkles size={14} />{STAGE_LABEL[match.type] ?? match.type}</span>
-                  {match.reasons[0] && <strong><Sparkles size={14} />{match.reasons[0].label}</strong>}
+          <div className="dashboard-project-grid dashboard-project-grid--saved">
+            {bookmarks.slice(0, 2).map((project) => (
+              <article className="dashboard-project-card" key={project.torId}>
+                <div className="dashboard-project-card__top">
+                  <span className="dashboard-project-card__category">{project.projectType ?? project.stage ?? "Saved project"}</span>
+                  <button
+                    type="button"
+                    className="dashboard-bookmark-button"
+                    aria-label="Remove saved project"
+                    title="Remove saved project"
+                    disabled={busyIds.has(project.torId)}
+                    onClick={() => { void toggleBookmark(project); }}
+                  ><BookmarkCheck size={17} /></button>
                 </div>
-                <h3>{match.torTitle}</h3><p>{match.agencyName}</p>
-                <div className="card-meta"><div><small>งบประมาณโดยประมาณ</small><strong>{formatThb(match.budgetThb)}</strong></div><div><small>กำหนดส่ง</small><strong>{formatDeadline(match.submissionDeadline)}</strong></div></div>
-                <div className="card-actions"><a className="button button--small" href={`/tors/${match.torId}`}>ดูรายละเอียด</a></div>
+                <h3>{project.title}</h3>
+                <p className="dashboard-project-card__agency">{project.agencyName}</p>
+                <div className="dashboard-project-card__meta">
+                  <div><small>ESTIMATED BUDGET</small><strong>{formatBudget(project.budget)}</strong></div>
+                  <div><small>SUBMISSION DEADLINE</small><strong>{formatDeadline(project.deadline)}</strong></div>
+                </div>
+                <Link className="dashboard-project-card__view" href={`/tors/${project.torId}`}>View Project</Link>
               </article>
             ))}
           </div>
         )}
       </section>
 
-      <section className="bottom-grid">
-        <article className="panel" id="bookmarks">
-          <div className="panel-title"><h2>โครงการที่บันทึกไว้</h2><span>บันทึก TOR ไว้ 7 รายการ</span></div>
-          <div className="bookmark-row"><div><strong>ปรับปรุงแพลตฟอร์มพอร์ทัลจัดเก็บภาษี กทม.</strong><small>งบประมาณโดยประมาณ · 12 ล้านบาท</small></div><span>เหลือ 14 วัน</span></div>
-          <div className="bookmark-row"><div><strong>ระบบติดตามขยะมูลฝอยของกรุงเทพมหานคร</strong><small>งบประมาณโดยประมาณ · 8.5 ล้านบาท</small></div><span>เหลือ 23 วัน</span></div>
-        </article>
-        <article className="panel">
-          <div className="panel-title"><h2>กิจกรรมล่าสุด</h2><a href="#history">ดูประวัติทั้งหมด</a></div>
-          <div className="activity"><FileText size={16} /><div><strong>โครงการปรับปรุงฐานข้อมูล GIS</strong><small>ดูสรุปจาก AI</small></div><time>2 ชั่วโมงที่แล้ว</time></div>
-          <div className="activity"><Clock3 size={16} /><div><strong>ซอฟต์แวร์เมืองอัจฉริยะ</strong><small>ใช้ตัวกรองโปรไฟล์</small></div><time>1 วันที่แล้ว</time></div>
-          <div className="activity"><FileText size={16} /><div><strong>แพลตฟอร์มส่งต่อผู้ป่วยสาธารณสุข</strong><small>ดาวน์โหลด PDF ทางการ</small></div><time>3 วันที่แล้ว</time></div>
-        </article>
+      <section className="dashboard-feature-section" aria-labelledby="recommendations-heading">
+        <div className="dashboard-feature-section__heading">
+          <div><h2 id="recommendations-heading">AI-Matched Recommended TORs</h2></div>
+          <Link href="/ai-recommendations">Show All</Link>
+        </div>
+        {loading ? (
+          <p className="dashboard-feature-state">Loading recommendations…</p>
+        ) : user?.role !== "vendor" ? (
+          <p className="dashboard-feature-state">AI recommendations are available for vendor accounts.</p>
+        ) : matches.length === 0 ? (
+          <div className="dashboard-feature-state dashboard-feature-state--empty">
+            <Sparkles size={20} />
+            <p>No AI-matched projects yet.</p>
+          </div>
+        ) : (
+          <div className="dashboard-project-grid dashboard-project-grid--three">
+            {matches.map((match) => {
+              const project = toBookmarkedProject(match);
+              return (
+                <article className="dashboard-project-card" key={match._id}>
+                  <div className="dashboard-project-card__top">
+                    <span className="dashboard-project-card__category">{match.reasons[0]?.label ?? "AI recommendation"}</span>
+                    <strong className="dashboard-project-card__match"><Sparkles size={14} />{matchPercentage(match.matchScore) ?? "AI Match"}</strong>
+                  </div>
+                  <h3>{match.torTitle}</h3>
+                  <p className="dashboard-project-card__agency">{match.agencyName}</p>
+                  <div className="dashboard-project-card__meta">
+                    <div><small>ESTIMATED BUDGET</small><strong>{formatBudget(match.budgetThb)}</strong></div>
+                    <div><small>SUBMISSION DEADLINE</small><strong>{formatDeadline(match.submissionDeadline)}</strong></div>
+                  </div>
+                  <div className="dashboard-project-card__actions">
+                    <Link className="dashboard-project-card__view" href={`/tors/${match.torId}`}>View Project</Link>
+                    <button
+                      type="button"
+                      className="dashboard-bookmark-button"
+                      aria-label={bookmarkedIds.has(match.torId) ? "Remove saved project" : "Save project"}
+                      aria-pressed={bookmarkedIds.has(match.torId)}
+                      disabled={busyIds.has(match.torId)}
+                      onClick={() => { void toggleBookmark(project); }}
+                    >{bookmarkedIds.has(match.torId) ? <BookmarkCheck size={17} /> : <Bookmark size={17} />}</button>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        )}
+      </section>
+
+      <section className="dashboard-feature-section" aria-labelledby="deadlines-heading">
+        <div className="dashboard-feature-section__heading">
+          <div><h2 id="deadlines-heading">Imminent Deadlines</h2></div>
+          <Link href="/imminent-deadlines">Show All</Link>
+        </div>
+        {loading ? (
+          <p className="dashboard-feature-state">Loading upcoming deadlines…</p>
+        ) : deadlines.length === 0 ? (
+          <div className="dashboard-feature-state dashboard-feature-state--empty">
+            <CalendarClock size={20} />
+            <p>No projects are due within the next 14 days.</p>
+          </div>
+        ) : (
+          <div className="dashboard-project-grid dashboard-project-grid--three">
+            {deadlines.map((project) => {
+              const savedProject = toBookmarkedProject(project);
+              return (
+                <article className="dashboard-project-card" key={project._id}>
+                  <div className="dashboard-project-card__top">
+                    <span className="dashboard-project-card__category">{project.lifecycle?.stage ?? "Upcoming deadline"}</span>
+                    <strong className="dashboard-project-card__match"><CalendarClock size={14} />{formatDaysRemaining(project.daysRemaining)}</strong>
+                  </div>
+                  <h3>{project.title}</h3>
+                  <p className="dashboard-project-card__agency">{project.agencyName}</p>
+                  <div className="dashboard-project-card__meta">
+                    <div><small>ESTIMATED BUDGET</small><strong>{formatBudget(project.budget?.amountThb)}</strong></div>
+                    <div><small>SUBMISSION DEADLINE</small><strong>{formatDeadline(project.timeline?.submissionDeadline)}</strong></div>
+                  </div>
+                  <div className="dashboard-project-card__actions">
+                    <Link className="dashboard-project-card__view" href={`/tors/${project._id}`}>View Project</Link>
+                    <button
+                      type="button"
+                      className="dashboard-bookmark-button"
+                      aria-label={bookmarkedIds.has(project._id) ? "Remove saved project" : "Save project"}
+                      aria-pressed={bookmarkedIds.has(project._id)}
+                      disabled={busyIds.has(project._id)}
+                      onClick={() => { void toggleBookmark(savedProject); }}
+                    >{bookmarkedIds.has(project._id) ? <BookmarkCheck size={17} /> : <Bookmark size={17} />}</button>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        )}
       </section>
     </AccountShell>
   );

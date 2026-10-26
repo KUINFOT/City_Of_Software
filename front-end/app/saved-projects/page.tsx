@@ -67,7 +67,7 @@ export default function SavedProjectsPage() {
 
       <section className="project-collection" aria-labelledby="saved-projects-heading">
         <div className="project-collection__heading">
-          <div><h2 id="saved-projects-heading">รายการที่บันทึกไว้</h2><span className="project-collection__count">{projects.length} โครงการ</span></div>
+          <div><h2 id="saved-projects-heading">รายการที่บันทึกไว้</h2></div>
           <p>โครงการที่บันทึกไว้จะแสดงที่นี่</p>
         </div>
         {error && <p className="bookmark-error" role="alert">{error}</p>}

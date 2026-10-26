@@ -128,6 +128,38 @@ button { cursor: pointer; }
 .metrics-grid p { margin: 0; color: #7b8596; font-size: 10px; }
 .blue { color: var(--blue); } .orange { color: var(--orange); } .green { color: var(--green); }
 .dashboard-section { margin-bottom: 28px; }
+.dashboard-error { margin: 0 0 20px; padding: 12px 15px; color: #a33131; background: #fff1f1; border: 1px solid #f1cccc; border-radius: 8px; font-size: 12px; }
+.dashboard-feature-section { margin-bottom: 32px; }
+.dashboard-feature-section__heading { margin-bottom: 16px; display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.dashboard-feature-section__heading > div { min-width: 0; display: flex; align-items: center; gap: 10px; }
+.dashboard-feature-section__heading h2 { margin: 0; color: #0f172a; font-size: 18px; font-weight: 800; line-height: 1.4; }
+.dashboard-feature-section__heading span { padding: 4px 10px; color: #1e3a8a; background: #eff6ff; border-radius: 6px; font-size: 11px; font-weight: 700; white-space: nowrap; }
+.dashboard-feature-section__heading > a { flex: 0 0 auto; color: #1e3a8a; font-size: 13px; font-weight: 700; }
+.dashboard-feature-section__heading > a:hover { color: #315bb1; text-decoration: underline; }
+.dashboard-project-grid { display: grid; gap: 18px; }
+.dashboard-project-grid--saved { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.dashboard-project-grid--three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.dashboard-project-card { min-width: 0; min-height: 254px; padding: 20px; display: flex; flex-direction: column; gap: 13px; background: #fff; border: 1px solid #e2e8f0; border-radius: 14px; box-shadow: 0 4px 12px rgba(15, 23, 42, .04); }
+.dashboard-project-card__top { min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.dashboard-project-card__category { min-width: 0; overflow: hidden; padding: 5px 9px; color: #1e3a8a; background: #eff6ff; border-radius: 5px; font-size: 11px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+.dashboard-project-card__match { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 5px; color: #d97706; font-size: 11px; }
+.dashboard-project-card h3 { display: -webkit-box; min-height: 44px; margin: 0; overflow: hidden; color: #0f172a; font-size: 15px; font-weight: 700; line-height: 1.45; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.dashboard-project-card__agency { margin: -7px 0 0; overflow: hidden; color: #475569; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.dashboard-project-card__meta { margin-top: auto; padding-top: 12px; display: flex; justify-content: space-between; gap: 14px; border-top: 1px solid #f1f5f9; }
+.dashboard-project-card__meta div { min-width: 0; display: grid; gap: 4px; }
+.dashboard-project-card__meta div:last-child { text-align: right; }
+.dashboard-project-card__meta small { color: #64748b; font-size: 9px; }
+.dashboard-project-card__meta strong { overflow: hidden; color: #1e3a8a; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.dashboard-project-card__actions { display: flex; gap: 8px; }
+.dashboard-project-card__view { min-height: 34px; flex: 1; display: flex; align-items: center; justify-content: center; padding: 6px 12px; color: #334155; background: #f1f5f9; border-radius: 6px; font-size: 11px; font-weight: 700; text-decoration: none; }
+.dashboard-project-card__view:hover { color: #1e3a8a; background: #e8eef7; }
+.dashboard-bookmark-button { width: 36px; min-height: 34px; flex: 0 0 auto; display: grid; place-items: center; color: #475569; background: #fff; border: 1px solid #e2e8f0; border-radius: 6px; cursor: pointer; }
+.dashboard-bookmark-button:hover:not(:disabled) { color: #1e3a8a; border-color: #b8c8e3; }
+.dashboard-bookmark-button:disabled { cursor: wait; opacity: .6; }
+.dashboard-feature-state { min-height: 100px; margin: 0; padding: 24px; display: flex; align-items: center; justify-content: center; gap: 10px; color: #64748b; background: #fff; border: 1px dashed #cbd5e1; border-radius: 12px; font-size: 12px; }
+.dashboard-feature-state--empty { flex-direction: column; gap: 8px; }
+.dashboard-feature-state--empty p { margin: 0; }
+.dashboard-feature-state--empty a { color: #1e3a8a; font-size: 12px; font-weight: 700; }
 .dashboard-completeness-prompt { margin: -8px 0 28px; padding: 18px 20px; display: flex; align-items: center; justify-content: space-between; gap: 20px; color: #26426f; background: linear-gradient(105deg, #eaf2ff, #f7faff); border: 1px solid #cbdcf7; border-radius: 11px; }
 .dashboard-completeness-prompt p { margin: 0 0 5px; color: #1f5ba9; font-size: 11px; font-weight: 800; }.dashboard-completeness-prompt h2 { margin: 0; color: #263a5d; font-size: 15px; }.dashboard-completeness-prompt span { display: block; margin-top: 6px; color: #65758c; font-size: 10px; }.dashboard-completeness-prompt .button { flex: 0 0 auto; white-space: nowrap; }
 .section-title, .panel-title, .settings-card__title { display: flex; align-items: center; justify-content: space-between; gap: 15px; }
@@ -654,6 +686,7 @@ button { cursor: pointer; }
   .sidebar { width: 208px; }
   .account-content { width: calc(100% - 208px); margin-left: 208px; }
   .match-grid { grid-template-columns: 1fr; }
+  .dashboard-project-grid--three { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .match-card { min-height: 225px; }
   .settings-grid { grid-template-columns: 1fr; }
   .profile-panel { min-height: 0; }
@@ -694,6 +727,11 @@ button { cursor: pointer; }
   .side-nav a:nth-child(2), .side-nav a:nth-child(4) { display: none; }
   .side-nav a::after { content: attr(href); max-width: 76px; overflow: hidden; font-size: 8px; text-overflow: ellipsis; }
   .account-content { width: 100%; margin-left: 0; padding: 22px 16px 90px; }
+  .dashboard-project-grid--saved, .dashboard-project-grid--three { grid-template-columns: 1fr; }
+  .dashboard-project-card { min-height: 240px; }
+  .dashboard-feature-section__heading h2 { font-size: 16px; }
+  .dashboard-feature-section__heading > div { align-items: flex-start; flex-direction: column; gap: 5px; }
+  .dashboard-feature-section__heading > a { font-size: 11px; }
   .project-collection__heading { align-items: flex-start; flex-direction: column; }
   .project-collection__heading > div { flex-wrap: wrap; }
   .deadline-window { align-items: flex-start; padding: 16px; }

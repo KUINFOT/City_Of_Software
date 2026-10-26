@@ -16,7 +16,7 @@ async function request<T>(path: string, token: string, init?: RequestInit): Prom
     ...init,
     headers: {
       ...(init?.body ? { "Content-Type": "application/json" } : {}),
-      Authorization: `******`,
+      Authorization: `Bearer ${token}`,
       ...init?.headers,
     },
   });

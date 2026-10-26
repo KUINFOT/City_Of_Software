@@ -110,7 +110,7 @@ export default function ImminentDeadlinesPage() {
 
       <section className="project-collection" aria-labelledby="imminent-projects-heading">
         <div className="project-collection__heading">
-          <div><h2 id="imminent-projects-heading">โครงการใกล้ถึงกำหนด</h2><span className="project-collection__count project-collection__count--urgent">{projects.length} โครงการ</span></div>
+          <div><h2 id="imminent-projects-heading">โครงการใกล้ถึงกำหนด</h2></div>
           <p>เรียงตามกำหนดส่งที่ใกล้ที่สุด</p>
         </div>
         {error && <p className="bookmark-error" role="alert">{error}</p>}
