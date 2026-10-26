@@ -34,6 +34,8 @@ export async function listBookmarks(req: Request, res: Response, next: NextFunct
             agencyName: '$tor.agencyName',
             budget: '$tor.budget',
             timeline: '$tor.timeline',
+            projectType: '$tor.projectType',
+            lifecycle: { stage: '$tor.lifecycle.stage' },
           },
         },
       },
@@ -111,11 +113,15 @@ export async function saveBookmark(req: Request, res: Response, next: NextFuncti
     }
 
     const { authUser } = req as AuthenticatedRequest;
-    await BookmarkModel.updateOne(
+    const result = await BookmarkModel.updateOne(
       { userId: authUser.id, torId },
       { $setOnInsert: { userId: authUser.id, torId } },
       { upsert: true }
     );
+    // Only a newly created bookmark counts: a repeated PUT must not inflate it.
+    if (result.upsertedCount > 0) {
+      await TorModel.updateOne({ _id: torId }, { $inc: { 'stats.bookmarkCount': 1 } });
+    }
 
     res.json({ saved: true, torId });
   } catch (err) {
@@ -138,7 +144,13 @@ export async function removeBookmark(req: Request, res: Response, next: NextFunc
     }
 
     const { authUser } = req as AuthenticatedRequest;
-    await BookmarkModel.deleteOne({ userId: authUser.id, torId });
+    const result = await BookmarkModel.deleteOne({ userId: authUser.id, torId });
+    if (result.deletedCount > 0) {
+      await TorModel.updateOne(
+        { _id: torId, 'stats.bookmarkCount': { $gt: 0 } },
+        { $inc: { 'stats.bookmarkCount': -1 } }
+      );
+    }
 
     res.json({ saved: false, torId });
   } catch (err) {

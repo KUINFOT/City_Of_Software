@@ -1,10 +1,13 @@
 "use client";
 
 import { FormEvent, useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { BarChart3, CircleHelp, Landmark, Map, Monitor, Network, Search, SlidersHorizontal } from "lucide-react";
 import { SiteHeader } from "@/components/site-header";
 import { Brand } from "@/components/brand";
 import { MatchGrid } from "@/components/match-grid";
+import { useAuth } from "@/components/auth-provider";
+import { listBookmarks, removeBookmark, saveBookmark } from "@/lib/bookmarks-api";
 
 const sortOptions = ["Highest Match %","Lowest Budget", "Highest Budget", "Newest", "Oldest", "Closest Deadline", "Furthest Deadline"];
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000/api";
@@ -92,6 +95,8 @@ function FilterGroup({ title, field, options, selected, onChange }: { title: str
 }
 
 export default function SearchPage() {
+	const { token, ready } = useAuth();
+	const router = useRouter();
 	const [query, setQuery] = useState("");
 	const [filters, setFilters] = useState<SearchFilters>(emptyFilters);
 	const [appliedQuery, setAppliedQuery] = useState("");
@@ -102,6 +107,51 @@ export default function SearchPage() {
 	const [documents, setDocuments] = useState<DocumentRecord[]>([]);
 	const [loading, setLoading] = useState(true);
 	const [initialized, setInitialized] = useState(false);
+	const [bookmarkedIds, setBookmarkedIds] = useState<Set<string>>(new Set());
+	const [bookmarkBusyIds, setBookmarkBusyIds] = useState<Set<string>>(new Set());
+	const [bookmarkError, setBookmarkError] = useState<string | null>(null);
+
+	useEffect(() => {
+		if (!ready || !token) {
+			setBookmarkedIds(new Set());
+			return;
+		}
+		let cancelled = false;
+		listBookmarks(token)
+			.then((bookmarks) => { if (!cancelled) setBookmarkedIds(new Set(bookmarks.map((bookmark) => bookmark.torId))); })
+			.catch((error: unknown) => { if (!cancelled) setBookmarkError(error instanceof Error ? error.message : "บันทึกรายการที่บันทึกไว้ไม่สำเร็จ"); });
+		return () => { cancelled = true; };
+	}, [ready, token]);
+
+	async function toggleBookmark(torId: string) {
+		if (!token) {
+			router.push(`/login?next=${encodeURIComponent(window.location.pathname + window.location.search)}`);
+			return;
+		}
+		setBookmarkError(null);
+		setBookmarkBusyIds((current) => new Set(current).add(torId));
+		try {
+			if (bookmarkedIds.has(torId)) {
+				await removeBookmark(token, torId);
+				setBookmarkedIds((current) => {
+					const next = new Set(current);
+					next.delete(torId);
+					return next;
+				});
+			} else {
+				await saveBookmark(token, torId);
+				setBookmarkedIds((current) => new Set(current).add(torId));
+			}
+		} catch (error) {
+			setBookmarkError(error instanceof Error ? error.message : "บันทึกโครงการไม่สำเร็จ");
+		} finally {
+			setBookmarkBusyIds((current) => {
+				const next = new Set(current);
+				next.delete(torId);
+				return next;
+			});
+		}
+	}
 
 	useEffect(() => {
 		const params = new URLSearchParams(window.location.search);
@@ -247,7 +297,13 @@ export default function SearchPage() {
 							</select>
 						</label>
 					</div>
-					<MatchGrid matches={documents.map((document, index) => ({ id: document._id, icon: icons[index % icons.length], category: document.projectType || document.technology || "Software Project", match: "Project", title: document.projectTitle, agency: document.agency, budget: document.budget || "Not specified", deadline: formatDeadline(document.deadline) }))} />
+					{bookmarkError && <p className="bookmark-error" role="alert">{bookmarkError}</p>}
+					<MatchGrid
+						matches={documents.map((document, index) => ({ id: document._id, icon: icons[index % icons.length], category: document.projectType || document.technology || "Software Project", match: "Project", title: document.projectTitle, agency: document.agency, budget: document.budget || "Not specified", deadline: formatDeadline(document.deadline) }))}
+						bookmarkedIds={bookmarkedIds}
+						busyIds={bookmarkBusyIds}
+						onToggleBookmark={(id) => { void toggleBookmark(id); }}
+					/>
 				</section>
 			</main>
 

@@ -110,7 +110,7 @@ export type BookmarkNoteState = { torId: string; note: string };
 export type SavedTor = {
   savedAt: string;
   note?: string;
-  tor: Pick<TorSummary, '_id' | 'title' | 'agencyName' | 'budget' | 'timeline'>;
+  tor: Pick<TorSummary, '_id' | 'title' | 'agencyName' | 'budget' | 'timeline' | 'lifecycle'> & { projectType?: string | null };
 };
 export type ComparisonTor = {
   _id: string;
