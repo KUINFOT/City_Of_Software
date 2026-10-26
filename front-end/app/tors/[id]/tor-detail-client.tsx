@@ -3,18 +3,22 @@
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { AlertTriangle, Building2, CheckCircle2, Copy, Download, HelpCircle, Sparkles, Star, UserPlus } from "lucide-react";
+import { AlertTriangle, Bookmark, Building2, CheckCircle2, Copy, Download, HelpCircle, Printer, Sparkles, Star, UserPlus } from "lucide-react";
 import { useAuth } from "@/components/auth-provider";
 import {
   getMatchReasons,
   getQualificationMatch,
   getTor,
   getTorDocuments,
+  listSavedTors,
   MatchReasonsResult,
   QualificationMatchResult,
+  saveTor,
   TorDetail,
   TorDocument,
+  unsaveTor,
 } from "@/lib/tor-api";
+import { escapePrintableText, openPrintableReport } from "@/lib/print-export";
 
 const STAGE_LABEL: Record<string, string> = {
   plan: "อยู่ระหว่างวางแผน",
@@ -96,6 +100,11 @@ export function TorDetailClient() {
 
   const [linkCopied, setLinkCopied] = useState(false);
   const [copyError, setCopyError] = useState(false);
+  const [isSaved, setIsSaved] = useState(false);
+  const [bookmarkReady, setBookmarkReady] = useState(false);
+  const [bookmarkPending, setBookmarkPending] = useState(false);
+  const [bookmarkError, setBookmarkError] = useState<string | null>(null);
+  const [exportError, setExportError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -117,6 +126,22 @@ export function TorDetailClient() {
   }, [torId]);
 
   const viewerRole = !ready ? null : !user ? "guest" : user.role === "vendor" ? "vendor" : "other";
+
+  useEffect(() => {
+    if (viewerRole !== "vendor" || !token) {
+      setIsSaved(false);
+      setBookmarkReady(true);
+      return;
+    }
+    let cancelled = false;
+    setBookmarkReady(false);
+    setBookmarkError(null);
+    listSavedTors(token)
+      .then((bookmarks) => { if (!cancelled) setIsSaved(bookmarks.some(({ tor }) => tor._id === torId)); })
+      .catch(() => { if (!cancelled) setBookmarkError("ไม่สามารถตรวจสอบรายการที่บันทึกไว้ได้"); })
+      .finally(() => { if (!cancelled) setBookmarkReady(true); });
+    return () => { cancelled = true; };
+  }, [viewerRole, token, torId]);
 
   useEffect(() => {
     if (viewerRole !== "vendor" || !token) return;
@@ -173,6 +198,20 @@ export function TorDetailClient() {
     }
   }
 
+  async function toggleBookmark() {
+    if (!token || viewerRole !== "vendor" || bookmarkPending) return;
+    setBookmarkPending(true);
+    setBookmarkError(null);
+    try {
+      const result = isSaved ? await unsaveTor(torId, token) : await saveTor(torId, token);
+      setIsSaved(result.saved);
+    } catch (error: unknown) {
+      setBookmarkError(error instanceof Error ? error.message : "ไม่สามารถบันทึกโครงการได้");
+    } finally {
+      setBookmarkPending(false);
+    }
+  }
+
   if (torLoading || !ready) {
     return <main className="tor-detail-page"><p className="tor-detail-loading">กำลังโหลดข้อมูล TOR...</p></main>;
   }
@@ -212,6 +251,51 @@ export function TorDetailClient() {
 
   const primaryDocument = documents?.find((d) => d.fileUrl) ?? null;
   const summaryText = tor.summaryAi?.text ?? (tor.fields.description?.value ? String(tor.fields.description.value) : null);
+
+  function exportSummary() {
+    // The state can change after this click (for example during a route
+    // transition), so export the exact record currently on screen.
+    const currentTor = tor;
+    if (!currentTor) return;
+    const list = (items: string[]) => items.length ? `<ul>${items.map((item) => `<li>${escapePrintableText(item)}</li>`).join("")}</ul>` : "ไม่ระบุ";
+    const row = (label: string, value: string) => `<tr><th>${escapePrintableText(label)}</th><td>${value}</td></tr>`;
+    const sourceUrl = currentTor.source?.sourceUrl;
+    let sourceMarkup = "ไม่ระบุ";
+    if (sourceUrl) {
+      try {
+        const parsed = new URL(sourceUrl);
+        if (parsed.protocol === "http:" || parsed.protocol === "https:") {
+          const safeUrl = escapePrintableText(sourceUrl);
+          sourceMarkup = `<a href="${safeUrl}" target="_blank" rel="noreferrer">${safeUrl}</a>`;
+        }
+      } catch { /* An invalid source stays explicitly unspecified. */ }
+    }
+    const qualificationItems = [
+      ...(currentTor.qualifications?.requiredCertifications ?? []).map((item) => `ใบรับรอง: ${item}`),
+      currentTor.qualifications?.minContractValueThb == null ? null : `มูลค่าสัญญาขั้นต่ำ ${formatThb(currentTor.qualifications.minContractValueThb)}`,
+      currentTor.qualifications?.requiredExperienceYears == null ? null : `ประสบการณ์ขั้นต่ำ ${currentTor.qualifications.requiredExperienceYears} ปี`,
+      ...(currentTor.qualifications?.items ?? []),
+    ].filter((item): item is string => Boolean(item));
+    const markup = `<h1>${escapePrintableText(currentTor.title)}</h1>
+      <div class="meta"><strong>${escapePrintableText(currentTor.agencyName)}</strong><br>วันที่ระบบเก็บข้อมูล: ${escapePrintableText(formatDate(currentTor.source?.discoveredAt) ?? "ไม่ระบุ")}</div>
+      <h2>สรุปโครงการ</h2><p>${escapePrintableText(summaryText ?? "ไม่ระบุ")}</p>
+      <h2>ข้อมูล TOR</h2><table><tbody>
+        ${row("งบประมาณ", escapePrintableText(typeof budget === "number" ? formatThb(budget) : "ไม่ระบุ"))}
+        ${row("กำหนดส่งข้อเสนอ", escapePrintableText(formatDate(submissionDeadline) ?? "ไม่ระบุ"))}
+        ${row("วันที่ประกาศ", escapePrintableText(formatDate(announcementDate) ?? "ไม่ระบุ"))}
+        ${row("เทคโนโลยีที่ต้องใช้", list(requiredTechnologies))}
+        ${row("คุณสมบัติผู้ยื่นข้อเสนอ", list(qualificationItems))}
+        ${row("เกณฑ์การประเมิน", list(evaluationCriteria))}
+        ${row("สิ่งที่ต้องส่งมอบ", list(deliverables))}
+        ${row("แหล่งข้อมูลต้นทาง", sourceMarkup)}
+      </tbody></table>
+      <div class="notice"><strong>ข้อควรทราบ:</strong> เอกสารนี้อาจมีสรุปหรือข้อมูลที่ระบบ AI สกัดจากเอกสารต้นทาง จึงใช้เพื่อประกอบการพิจารณาเท่านั้น โปรดตรวจสอบกับเอกสารและแหล่งข้อมูลต้นทางก่อนตัดสินใจ</div>`;
+    if (!openPrintableReport({ title: `สรุป TOR - ${currentTor.title}`, bodyHtml: markup })) {
+      setExportError("เบราว์เซอร์บล็อกหน้าต่างส่งออก โปรดอนุญาต pop-up แล้วลองอีกครั้ง");
+    } else {
+      setExportError(null);
+    }
+  }
 
   return (
     <main className="tor-detail-page">
@@ -346,13 +430,25 @@ export function TorDetailClient() {
                   <Download size={16} />ไม่มีเอกสารต้นฉบับให้ดาวน์โหลด
                 </button>
               )}
-              <button className="tor-action-button" type="button" disabled title="ฟีเจอร์นี้จะเปิดให้ใช้งานเร็วๆ นี้">
-                บันทึกโครงการ<span className="tor-coming-soon">เร็วๆ นี้</span>
-              </button>
+              {viewerRole === "vendor" ? (
+                <button className="tor-action-button" type="button" onClick={toggleBookmark} disabled={!bookmarkReady || bookmarkPending} aria-pressed={isSaved}>
+                  <Bookmark size={15} fill={isSaved ? "currentColor" : "none"} />
+                  {bookmarkPending ? "กำลังบันทึก..." : !bookmarkReady ? "กำลังตรวจสอบ..." : isSaved ? "ยกเลิกการบันทึก" : "บันทึกโครงการ"}
+                </button>
+              ) : viewerRole === "guest" ? (
+                <Link className="tor-action-button" href="/login"><Bookmark size={15} />เข้าสู่ระบบเพื่อบันทึก</Link>
+              ) : (
+                <button className="tor-action-button" type="button" disabled><Bookmark size={15} />บันทึกได้เฉพาะผู้ขาย</button>
+              )}
               <button className="tor-action-button" type="button" onClick={copyLink}>
                 <Copy size={15} />{linkCopied ? "คัดลอกลิงก์แล้ว" : copyError ? "คัดลอกลิงก์ไม่สำเร็จ" : "แชร์โครงการ"}
               </button>
+              <button className="tor-action-button" type="button" onClick={exportSummary}>
+                <Printer size={15} />ส่งออกสรุป / บันทึก PDF
+              </button>
             </div>
+            {bookmarkError && <p className="tor-bookmark-error" role="alert">{bookmarkError}</p>}
+            {exportError && <p className="tor-bookmark-error" role="alert">{exportError}</p>}
             {deadlineKeyDate?.date && (
               <>
                 <hr className="tor-sidebar-divider" />
