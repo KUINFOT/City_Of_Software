@@ -2,10 +2,12 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { Bell, CalendarDays, ChevronLeft, ChevronRight, List, Calendar as CalendarIcon } from "lucide-react";
+import { Bell, Bookmark, CalendarDays, ChevronLeft, ChevronRight, FolderOpen, List, Calendar as CalendarIcon } from "lucide-react";
 import { AccountMenu } from "@/components/account-menu";
 import { AccountShell } from "@/components/account-shell";
-import { listTors, TorSummary } from "@/lib/tor-api";
+import { useAuth } from "@/components/auth-provider";
+import { BookmarkedProject, listBookmarks } from "@/lib/bookmarks-api";
+import { listAllTorDeadlines, TorDeadline } from "@/lib/tor-api";
 
 type CalendarEvent = {
   id: string;
@@ -15,6 +17,7 @@ type CalendarEvent = {
 };
 
 type CalendarView = "month" | "list";
+type CalendarScope = "saved" | "all";
 
 const WEEKDAYS = ["อา.", "จ.", "อ.", "พ.", "พฤ.", "ศ.", "ส."];
 
@@ -65,35 +68,76 @@ function daysLabel(date: Date) {
   return `เลยกำหนด ${Math.abs(difference)} วัน`;
 }
 
-function getEvents(tors: TorSummary[]): CalendarEvent[] {
-  return tors.flatMap((tor) => {
-    const date = parseCalendarDate(tor.timeline?.submissionDeadline);
-    return date ? [{ id: tor._id, title: tor.title, agencyName: tor.agencyName, date }] : [];
-  }).sort((first, second) => first.date.getTime() - second.date.getTime());
+/** A TOR that may carry a deadline, whichever API it came from. A TOR listed twice appears once. */
+type DeadlineSource = { id: string; title: string; agencyName: string; deadline: string | null };
+
+function getEvents(sources: DeadlineSource[]): CalendarEvent[] {
+  const events = new Map<string, CalendarEvent>();
+  for (const source of sources) {
+    const date = parseCalendarDate(source.deadline);
+    if (date && !events.has(source.id)) {
+      events.set(source.id, { id: source.id, title: source.title, agencyName: source.agencyName, date });
+    }
+  }
+  return [...events.values()].sort((first, second) => first.date.getTime() - second.date.getTime());
 }
 
 export default function CalendarPage() {
-  const [tors, setTors] = useState<TorSummary[]>([]);
+  const { token, ready } = useAuth();
+  const [allTors, setAllTors] = useState<TorDeadline[]>([]);
+  const [saved, setSaved] = useState<BookmarkedProject[]>([]);
+  const [scope, setScope] = useState<CalendarScope>("saved");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [month, setMonth] = useState(() => {
     const today = new Date();
     return new Date(today.getUTCFullYear(), today.getUTCMonth(), 1);
   });
+  const [monthChosen, setMonthChosen] = useState(false);
   const [view, setView] = useState<CalendarView>("month");
 
   useEffect(() => {
+    if (!ready) return;
     let cancelled = false;
-    listTors()
-      .then((result) => { if (!cancelled) setTors(result); })
+    Promise.all([
+      // Past deadlines included: the calendar's "all projects" filter shows them, and the
+      // public TOR list would hide them.
+      listAllTorDeadlines(),
+      // Saved TORs are a vendor feature: a failure here must not blank the calendar.
+      token ? listBookmarks(token).catch(() => [] as BookmarkedProject[]) : Promise.resolve([] as BookmarkedProject[]),
+    ])
+      .then(([allResult, savedResult]) => {
+        if (cancelled) return;
+        setAllTors(allResult);
+        setSaved(savedResult);
+      })
       .catch((reason: unknown) => {
         if (!cancelled) setError(reason instanceof Error ? reason.message : "โหลดกำหนดการไม่สำเร็จ");
       })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, []);
+  }, [ready, token]);
 
-  const events = useMemo(() => getEvents(tors), [tors]);
+  const savedSources = useMemo<DeadlineSource[]>(
+    () => saved.map((project) => ({ id: project.torId, title: project.title, agencyName: project.agencyName, deadline: project.deadline })),
+    [saved]
+  );
+  const events = useMemo(() => {
+    if (scope === "saved") return getEvents(savedSources);
+    const allSources = allTors.map((tor) => ({ id: tor._id, title: tor.title, agencyName: tor.agencyName, deadline: tor.submissionDeadline }));
+    return getEvents([...allSources, ...savedSources]);
+  }, [scope, allTors, savedSources]);
+
+  // Opening on an empty month hides every project, so until the vendor picks a
+  // month, land on the nearest one that has a deadline (upcoming first, else the latest).
+  useEffect(() => {
+    if (loading || monthChosen || events.length === 0) return;
+    const today = new Date();
+    if (events.some((event) => event.date.getFullYear() === month.getFullYear() && event.date.getMonth() === month.getMonth())) return;
+    const startOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+    const target = events.find((event) => event.date >= startOfToday) ?? events[events.length - 1];
+    setMonth(new Date(target.date.getFullYear(), target.date.getMonth(), 1));
+  }, [loading, monthChosen, events, month]);
   const monthEvents = useMemo(
     () => events.filter((event) => event.date.getFullYear() === month.getFullYear() && event.date.getMonth() === month.getMonth()),
     [events, month]
@@ -106,12 +150,20 @@ export default function CalendarPage() {
   const monthLabel = new Intl.DateTimeFormat("th-TH", { month: "long", year: "numeric" }).format(month);
 
   function changeMonth(offset: number) {
+    setMonthChosen(true);
     setMonth((current) => new Date(current.getFullYear(), current.getMonth() + offset, 1));
   }
 
   function showToday() {
+    setMonthChosen(true);
     const today = new Date();
     setMonth(new Date(today.getFullYear(), today.getMonth(), 1));
+  }
+
+  // Switching the filter starts again from today's month.
+  function changeScope(next: CalendarScope) {
+    setScope(next);
+    showToday();
   }
 
   return (
@@ -135,25 +187,46 @@ export default function CalendarPage() {
             <button type="button" aria-label="เดือนถัดไป" onClick={() => changeMonth(1)}><ChevronRight size={18} /></button>
             <button className="calendar-today-button" type="button" onClick={showToday}>วันนี้</button>
           </div>
-          <div className="calendar-view-tabs" role="tablist" aria-label="รูปแบบการแสดงผล">
-            <button
-              type="button"
-              role="tab"
-              aria-selected={view === "month"}
-              className={view === "month" ? "active" : ""}
-              onClick={() => setView("month")}
-            >
-              <CalendarIcon size={16} /> เดือน
-            </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={view === "list"}
-              className={view === "list" ? "active" : ""}
-              onClick={() => setView("list")}
-            >
-              <List size={16} /> รายการ
-            </button>
+          <div className="calendar-toolbar-controls">
+            <div className="calendar-view-tabs" role="group" aria-label="โครงการที่แสดง">
+              <button
+                type="button"
+                aria-pressed={scope === "saved"}
+                className={scope === "saved" ? "active" : ""}
+                onClick={() => changeScope("saved")}
+              >
+                <Bookmark size={16} /> โครงการที่บันทึกไว้
+              </button>
+              <button
+                type="button"
+                aria-pressed={scope === "all"}
+                className={scope === "all" ? "active" : ""}
+                title="รวมโครงการที่เลยกำหนดส่งแล้วและที่ยังไม่ถึงกำหนด"
+                onClick={() => changeScope("all")}
+              >
+                <FolderOpen size={16} /> โครงการทั้งหมด
+              </button>
+            </div>
+            <div className="calendar-view-tabs" role="tablist" aria-label="รูปแบบการแสดงผล">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={view === "month"}
+                className={view === "month" ? "active" : ""}
+                onClick={() => setView("month")}
+              >
+                <CalendarIcon size={16} /> เดือน
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={view === "list"}
+                className={view === "list" ? "active" : ""}
+                onClick={() => setView("list")}
+              >
+                <List size={16} /> รายการ
+              </button>
+            </div>
           </div>
         </div>
 
@@ -210,8 +283,17 @@ export default function CalendarPage() {
             {monthEvents.length === 0 ? (
               <div className="calendar-empty">
                 <CalendarDays size={26} />
-                <strong>ไม่มีโครงการที่มีกำหนดส่งในเดือนนี้</strong>
-                <p>ลองเลือกเดือนอื่น หรือตรวจสอบอีกครั้งภายหลัง</p>
+                {scope === "saved" && events.length === 0 ? (
+                  <>
+                    <strong>ยังไม่มีโครงการที่บันทึกไว้ซึ่งมีกำหนดส่ง</strong>
+                    <p>บันทึกโครงการจากหน้ารายละเอียด หรือเลือก “โครงการทั้งหมด” เพื่อดูทุกโครงการ</p>
+                  </>
+                ) : (
+                  <>
+                    <strong>ไม่มีโครงการที่มีกำหนดส่งในเดือนนี้</strong>
+                    <p>ลองเลือกเดือนอื่น หรือตรวจสอบอีกครั้งภายหลัง</p>
+                  </>
+                )}
               </div>
             ) : monthEvents.map((event) => (
               <article className="calendar-event-row" key={event.id}>
