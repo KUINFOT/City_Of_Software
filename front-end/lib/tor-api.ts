@@ -155,6 +155,21 @@ export function listTors(limit = 200): Promise<TorSummary[]> {
   return request(`/tors?limit=${limit}`);
 }
 
+export type TorDeadline = { _id: string; title: string; agencyName: string; submissionDeadline: string | null };
+
+/** GET /api/documents?availability=all — every published TOR, including the ones
+ *  whose deadline has passed (which `listTors` hides), cut down to what a
+ *  deadline calendar needs. */
+export async function listAllTorDeadlines(): Promise<TorDeadline[]> {
+  const result = await request<{ documents: { _id: string; projectTitle: string; agency: string; deadline: string | null }[] }>('/documents?availability=all');
+  return result.documents.map((document) => ({
+    _id: document._id,
+    title: document.projectTitle,
+    agencyName: document.agency,
+    submissionDeadline: document.deadline,
+  }));
+}
+
 export async function getTorDocuments(id: string): Promise<TorDocument[]> {
   const result = await request<{ documents: TorDocument[] }>(`/tors/${id}/documents`);
   return result.documents;

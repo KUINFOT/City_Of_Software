@@ -428,6 +428,7 @@ button { cursor: pointer; }
 .calendar-month-navigation button { width: 40px; height: 40px; display: grid; place-items: center; color: #475569; background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; }
 .calendar-month-navigation button:hover { color: #1e3a8a; border-color: #b9c9e4; }
 .calendar-month-navigation .calendar-today-button { width: auto; padding: 0 12px; color: #0f172a; font-size: 13px; font-weight: 600; }
+.calendar-toolbar-controls { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 12px; }
 .calendar-view-tabs { padding: 4px; display: flex; gap: 4px; background: #f1f5f9; border-radius: 8px; }
 .calendar-view-tabs button { min-height: 35px; padding: 0 16px; display: inline-flex; align-items: center; gap: 8px; color: #475569; background: transparent; border: 1px solid transparent; border-radius: 6px; font-size: 13px; font-weight: 700; }
 .calendar-view-tabs button.active { color: #1e3a8a; background: #fff; border-color: #e2e8f0; }
@@ -483,7 +484,7 @@ button { cursor: pointer; }
   .calendar-toolbar { align-items: flex-start; flex-direction: column; }
   .calendar-month-navigation { width: 100%; gap: 7px; }
   .calendar-month-navigation h2 { min-width: 0; flex: 1; font-size: 18px; }
-  .calendar-view-tabs { align-self: flex-end; }
+  .calendar-toolbar-controls { width: 100%; justify-content: flex-start; }
   .calendar-day { min-height: 78px; padding: 5px 3px; }
   .calendar-day-number { min-height: 22px; font-size: 10px; line-height: 22px; }
   .calendar-day--today .calendar-day-number { width: 22px; height: 22px; }
