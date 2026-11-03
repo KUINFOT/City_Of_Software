@@ -1,0 +1,22 @@
+# Build context for back-end/Dockerfile. Patterns are relative to this directory;
+# `**/` also catches nested copies.
+
+# Installed and compiled inside the image
+**/node_modules
+dist
+
+# Secrets and local configuration: supply these when the container runs
+# (see docker-compose.yml), never through the image
+**/.env
+**/.env.*
+**/service-account*.json
+
+# Downloaded TOR/announcement PDFs (EXTRACTION_STORAGE_DIR) live on a volume
+storage
+
+# Not needed to build or run the API
+**/*.log
+.git
+.gitignore
+Dockerfile
+.dockerignore
