@@ -1,0 +1,7 @@
+# Docker Compose settings hold real secrets: copy .env.example to .env
+.env
+.env.*
+!.env.example
+
+# Google Cloud service account key mounted into the back-end container
+/secrets/

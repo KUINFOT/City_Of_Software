@@ -1,0 +1,87 @@
+# Runs the whole stack: the back-end API and the front-end. MongoDB is external
+# (MongoDB Atlas, through MONGODB_URI), so there is no database container.
+# Settings come from a `.env` file next to this one (copy .env.example) or from
+# real environment variables. See "Deployment with Docker" in README.md.
+#
+#   docker compose up --build -d
+
+name: city-of-software
+
+services:
+  back-end:
+    build:
+      context: ./back-end
+    # Run exactly one back-end. The scheduler's overlap lock lives in process
+    # memory, so a second instance would repeat every crawl. The fixed host
+    # port below also stops `--scale back-end=2`. Scaling out needs a
+    # database-backed lock first (docs/extraction-pipeline.md).
+    init: true
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    # Any other back-end setting from back-end/.env.example (EXTRACTION_*,
+    # CRON_*, ...) can simply be added to .env and is passed through.
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      NODE_ENV: production
+      PORT: "4000"
+      # The scheduler's cron expressions have no time zone of their own, so the
+      # container's decides when the daily jobs run.
+      TZ: ${APP_TIMEZONE:-Asia/Bangkok}
+
+      # Required
+      MONGODB_URI: ${MONGODB_URI:?Set MONGODB_URI in .env (see .env.example)}
+      AUTH_SECRET: ${AUTH_SECRET:?Set AUTH_SECRET in .env (see .env.example)}
+
+      # URLs that must match the host the stack is served from
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:3000}
+      APP_URL: ${APP_URL:-http://localhost:3000}
+      PUBLIC_API_URL: ${PUBLIC_API_URL:-http://localhost:4000/api}
+
+      # Email (Gmail SMTP or Resend). The API needs one of them in production.
+      GMAIL_USER: ${GMAIL_USER:-}
+      GMAIL_APP_PASSWORD: ${GMAIL_APP_PASSWORD:-}
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      EMAIL_FROM: ${EMAIL_FROM:-}
+
+      # Google Cloud. Leave GCP_PROJECT_ID empty to run on the built-in stubs.
+      GCP_PROJECT_ID: ${GCP_PROJECT_ID:-}
+      GCP_LOCATION: ${GCP_LOCATION:-us}
+      DOC_AI_PROCESSOR_ID: ${DOC_AI_PROCESSOR_ID:-}
+      VERTEX_AI_LOCATION: ${VERTEX_AI_LOCATION:-asia-southeast1}
+      VERTEX_AI_MODEL: ${VERTEX_AI_MODEL:-gemini-2.5-flash}
+      GOOGLE_APPLICATION_CREDENTIALS: /run/secrets/service-account.json
+
+      # The daily collection stays off unless this is set to true.
+      SCHEDULER_ENABLED: ${SCHEDULER_ENABLED:-false}
+    volumes:
+      # Downloaded TOR/announcement PDFs (EXTRACTION_STORAGE_DIR in the image).
+      - tor-storage:/data/storage
+      # The Google Cloud service account key, read-only, as
+      # secrets/service-account.json. Never part of an image.
+      - ${GCP_CREDENTIALS_DIR:-./secrets}:/run/secrets:ro
+    ports:
+      - "${BACKEND_PORT:-4000}:4000"
+
+  front-end:
+    build:
+      context: ./front-end
+      args:
+        # Read by `next build` and baked into the JavaScript bundle, so a change
+        # needs `docker compose up --build`. It is the URL the browser calls.
+        NEXT_PUBLIC_API_URL: ${PUBLIC_API_URL:-http://localhost:4000/api}
+    init: true
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    ports:
+      - "${FRONTEND_PORT:-3000}:3000"
+
+volumes:
+  tor-storage:

@@ -43,3 +43,22 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm run build
+
+  docker:
+    runs-on: ubuntu-latest
+    env:
+      # Dummy values so docker-compose.yml's required-variable checks pass. The
+      # short selection timeout lets the API start although there is no MongoDB
+      # to reach; nothing here is a real credential.
+      MONGODB_URI: "mongodb://127.0.0.1:27017/city_of_software_ci?serverSelectionTimeoutMS=2000"
+      AUTH_SECRET: ci-only-not-a-secret
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check docker-compose.yml
+        run: docker compose config --quiet
+      # Builds both images, then waits for their health checks to pass.
+      - name: Build the images and start the stack
+        run: docker compose up --build --wait --wait-timeout 180
+      - name: Show service logs
+        if: failure()
+        run: docker compose logs
