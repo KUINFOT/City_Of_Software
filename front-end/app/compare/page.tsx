@@ -1,14 +1,13 @@
 import { Suspense } from "react";
-import { SiteHeader } from "@/components/site-header";
-import { CompareTorsClient } from "./compare-tors-client";
+import { AccountShell } from "@/components/account-shell";
+import { CompareWorkspaceClient } from "./compare-workspace-client";
 
 export default function CompareTorsPage() {
   return (
-    <>
-      <SiteHeader active="ค้นหา TOR" />
+    <AccountShell>
       <Suspense>
-        <CompareTorsClient />
+        <CompareWorkspaceClient />
       </Suspense>
-    </>
+    </AccountShell>
   );
 }

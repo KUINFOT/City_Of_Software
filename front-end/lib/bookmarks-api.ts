@@ -9,6 +9,7 @@ export type BookmarkedProject = {
   deadline: string | null;
   stage: string | null;
   savedAt: string;
+  note?: string;
 };
 
 /**
@@ -19,7 +20,7 @@ export type BookmarkedProject = {
  */
 export async function listBookmarks(token: string): Promise<BookmarkedProject[]> {
   const saved = await listSavedTors(token);
-  return saved.map(({ savedAt, tor }) => ({
+  return saved.map(({ savedAt, note, tor }) => ({
     torId: tor._id,
     title: tor.title,
     agencyName: tor.agencyName,
@@ -28,6 +29,7 @@ export async function listBookmarks(token: string): Promise<BookmarkedProject[]>
     deadline: tor.timeline?.submissionDeadline ?? null,
     stage: tor.lifecycle?.stage ?? null,
     savedAt,
+    note,
   }));
 }
 

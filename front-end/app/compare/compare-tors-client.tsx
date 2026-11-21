@@ -3,7 +3,8 @@
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
-import { ArrowLeft, Printer, Scale } from "lucide-react";
+import { ArrowLeft, Bell, Printer, Scale } from "lucide-react";
+import { AccountMenu } from "@/components/account-menu";
 import { useAuth } from "@/components/auth-provider";
 import { ComparisonTor, previewTorComparison } from "@/lib/tor-api";
 import { escapePrintableText, openPrintableReport } from "@/lib/print-export";
@@ -131,30 +132,48 @@ export function CompareTorsClient() {
 
   return (
     <main className="comparison-page">
-      <div className="comparison-page__header">
-        <Link href="/dashboard#bookmarks" className="comparison-back"><ArrowLeft size={16} />กลับไปเลือก TOR</Link>
-        <p className="comparison-kicker"><Scale size={15} />TOR COMPARISON</p>
-        <h1>เปรียบเทียบ TOR แบบเคียงข้างกัน</h1>
-        <p>ข้อมูลที่ยังไม่ปรากฏใน TOR จะแสดงเป็น “ไม่ระบุ” และระบบจะแสดงฐานภาษีของงบประมาณตามเอกสารต้นทาง โดยไม่ปรับให้เท่ากัน</p>
-        {!loading && !error && <button className="comparison-export" type="button" onClick={exportComparison}><Printer size={15} />ส่งออก / บันทึก PDF</button>}
-        {exportError && <p className="comparison-export-error" role="alert">{exportError}</p>}
-      </div>
-
-      {loading ? <p className="comparison-state">กำลังโหลดข้อมูลเปรียบเทียบ...</p> : error ? <section className="comparison-state" role="alert"><p>{error}</p><Link className="button button--primary" href="/dashboard#bookmarks">กลับไปเลือกรายการ</Link></section> : (
-        <div className="comparison-table-wrap">
-          <table className="comparison-table">
-            <thead><tr><th scope="col">หัวข้อ</th>{tors.map((tor) => <th scope="col" key={tor._id}><Link href={`/tors/${tor._id}`}>{tor.title}</Link><small>{tor.agencyName}</small></th>)}</tr></thead>
-            <tbody>
-              <tr><th scope="row">งบประมาณ</th>{tors.map((tor) => <td key={tor._id}><BudgetCell budget={tor.budget} /></td>)}</tr>
-              <tr><th scope="row">ระยะเวลาและกำหนดส่ง</th>{tors.map((tor) => <td key={tor._id}><DurationCell tor={tor} /></td>)}</tr>
-              <tr><th scope="row">เทคโนโลยี</th>{tors.map((tor) => <td key={tor._id}><ListCell values={tor.technologies} /></td>)}</tr>
-              <tr><th scope="row">คุณสมบัติผู้ยื่นข้อเสนอ</th>{tors.map((tor) => <td key={tor._id}><QualificationsCell qualifications={tor.qualifications} /></td>)}</tr>
-              <tr><th scope="row">เกณฑ์การประเมิน</th>{tors.map((tor) => <td key={tor._id}><CriteriaCell criteria={tor.evaluationCriteria} /></td>)}</tr>
-              <tr><th scope="row">สิ่งที่ต้องส่งมอบ</th>{tors.map((tor) => <td key={tor._id}><ListCell values={tor.deliverables} /></td>)}</tr>
-            </tbody>
-          </table>
+      <header className="account-header compare-selector__account-header">
+        <div />
+        <div className="profile-actions">
+          <button type="button" aria-label="การแจ้งเตือน"><Bell size={18} /></button>
+          <AccountMenu compact />
         </div>
-      )}
+      </header>
+
+      <section className="compare-selector compare-results" aria-labelledby="compare-results-heading">
+        <div className="compare-selector__intro">
+          <span className="compare-selector__hero-icon"><Scale size={28} /></span>
+          <div><h1 id="compare-results-heading">เปรียบเทียบ TOR</h1><p>ตรวจสอบรายละเอียดของโครงการที่เลือกแบบเคียงข้างกัน</p></div>
+        </div>
+
+        <ol className="compare-selector__steps" aria-label="ขั้นตอนการเปรียบเทียบ">
+          <li className="complete"><Link href="/compare"><span>✓</span><strong>เลือกโครงการ (2–4 โครงการ)</strong></Link></li>
+          <li className="compare-selector__connector" aria-hidden="true" />
+          <li className="active"><span>2</span><strong>ดูผลการเปรียบเทียบ</strong></li>
+        </ol>
+
+        <div className="compare-results__header">
+          <div><Link href="/compare" className="comparison-back"><ArrowLeft size={16} />กลับไปเลือก TOR</Link><h2>ผลการเปรียบเทียบ</h2><p>ข้อมูลที่ยังไม่ปรากฏใน TOR จะแสดงเป็น “ไม่ระบุ” และระบบจะแสดงฐานภาษีของงบประมาณตามเอกสารต้นทาง โดยไม่ปรับให้เท่ากัน</p></div>
+          {!loading && !error && <button className="comparison-export" type="button" onClick={exportComparison}><Printer size={15} />ส่งออก / บันทึก PDF</button>}
+        </div>
+        {exportError && <p className="comparison-export-error" role="alert">{exportError}</p>}
+
+        {loading ? <p className="comparison-state">กำลังโหลดข้อมูลเปรียบเทียบ...</p> : error ? <section className="comparison-state" role="alert"><p>{error}</p><Link className="button button--primary" href="/compare">กลับไปเลือกรายการ</Link></section> : (
+          <div className="comparison-table-wrap">
+            <table className="comparison-table">
+              <thead><tr><th scope="col">หัวข้อ</th>{tors.map((tor) => <th scope="col" key={tor._id}><Link href={`/tors/${tor._id}`}>{tor.title}</Link><small>{tor.agencyName}</small></th>)}</tr></thead>
+              <tbody>
+                <tr><th scope="row">งบประมาณ</th>{tors.map((tor) => <td key={tor._id}><BudgetCell budget={tor.budget} /></td>)}</tr>
+                <tr><th scope="row">ระยะเวลาและกำหนดส่ง</th>{tors.map((tor) => <td key={tor._id}><DurationCell tor={tor} /></td>)}</tr>
+                <tr><th scope="row">เทคโนโลยี</th>{tors.map((tor) => <td key={tor._id}><ListCell values={tor.technologies} /></td>)}</tr>
+                <tr><th scope="row">คุณสมบัติผู้ยื่นข้อเสนอ</th>{tors.map((tor) => <td key={tor._id}><QualificationsCell qualifications={tor.qualifications} /></td>)}</tr>
+                <tr><th scope="row">เกณฑ์การประเมิน</th>{tors.map((tor) => <td key={tor._id}><CriteriaCell criteria={tor.evaluationCriteria} /></td>)}</tr>
+                <tr><th scope="row">สิ่งที่ต้องส่งมอบ</th>{tors.map((tor) => <td key={tor._id}><ListCell values={tor.deliverables} /></td>)}</tr>
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
     </main>
   );
 }

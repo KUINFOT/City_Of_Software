@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Activity, AlertCircle, BarChart3, Bell, Bookmark, Bot, Building2, Calendar, CircleUserRound, ClipboardCheck, Cog, Gauge, HardDriveDownload, History, KeyRound, RadioTower, ShieldCheck } from "lucide-react";
+import { Activity, AlertCircle, BarChart3, Bell, Bookmark, Bot, Building2, Calendar, CircleUserRound, ClipboardCheck, Cog, Gauge, HardDriveDownload, History, KeyRound, RadioTower, Scale, ShieldCheck } from "lucide-react";
 import { Brand } from "./brand";
 import { useAuth } from "./auth-provider";
 
@@ -18,13 +18,15 @@ const items = [
   { label: "เปรียบเทียบงบประมาณ", href: "/analytics/budgets", icon: BarChart3 },
   { label: "ความถี่รายหน่วยงาน", href: "/analytics/agencies", icon: Building2 },
 ];
+const compareItem = { label: "เปรียบเทียบ TOR", href: "/compare", icon: Scale };
 
 export function Sidebar() {
   const pathname = usePathname();
   const { user } = useAuth();
-  const visibleItems = user?.role === "admin"
-    ? [...items, { label: "คิวตรวจสอบ", href: "/admin/review", icon: ClipboardCheck }, { label: "ติดตามหน่วยงาน", href: "/admin/agency-monitor", icon: RadioTower }, { label: "สถานะตัวเชื่อมต่อ", href: "/admin/adapter-health", icon: Activity }, { label: "บัญชีและบทบาท", href: "/admin/accounts", icon: ShieldCheck }, { label: "ประวัติการตรวจสอบ", href: "/admin/audit-log", icon: History }, { label: "ส่งออกข้อมูล", href: "/admin/export-repository", icon: HardDriveDownload }]
-    : items;
+  const visibleItems = [
+    ...(user?.role === "vendor" ? [...items.slice(0, 8), compareItem, ...items.slice(8)] : items),
+    ...(user?.role === "admin" ? [{ label: "คิวตรวจสอบ", href: "/admin/review", icon: ClipboardCheck }, { label: "ติดตามหน่วยงาน", href: "/admin/agency-monitor", icon: RadioTower }, { label: "สถานะตัวเชื่อมต่อ", href: "/admin/adapter-health", icon: Activity }, { label: "บัญชีและบทบาท", href: "/admin/accounts", icon: ShieldCheck }, { label: "ประวัติการตรวจสอบ", href: "/admin/audit-log", icon: History }, { label: "ส่งออกข้อมูล", href: "/admin/export-repository", icon: HardDriveDownload }] : []),
+  ];
 
   return (
     <aside className="sidebar">

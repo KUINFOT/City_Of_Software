@@ -1,12 +1,13 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Bookmark, BriefcaseBusiness } from "lucide-react";
+import { Bookmark, BriefcaseBusiness, Save, StickyNote, X } from "lucide-react";
 import { AccountMenu } from "@/components/account-menu";
 import { AccountShell } from "@/components/account-shell";
 import { MatchGrid } from "@/components/match-grid";
 import { useAuth } from "@/components/auth-provider";
 import { BookmarkedProject, listBookmarks, removeBookmark } from "@/lib/bookmarks-api";
+import { updateSavedTorNote } from "@/lib/tor-api";
 
 const icons = [Bookmark, BriefcaseBusiness];
 
@@ -24,6 +25,10 @@ export default function SavedProjectsPage() {
   const [loading, setLoading] = useState(true);
   const [busyIds, setBusyIds] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
+  const [noteProject, setNoteProject] = useState<BookmarkedProject | null>(null);
+  const [noteDraft, setNoteDraft] = useState("");
+  const [noteSaving, setNoteSaving] = useState(false);
+  const [noteError, setNoteError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!token) return;
@@ -50,6 +55,27 @@ export default function SavedProjectsPage() {
         next.delete(torId);
         return next;
       });
+    }
+  }
+
+  function openNote(project: BookmarkedProject) {
+    setNoteProject(project);
+    setNoteDraft(project.note ?? "");
+    setNoteError(null);
+  }
+
+  async function saveNote() {
+    if (!token || !noteProject || noteSaving) return;
+    setNoteSaving(true);
+    setNoteError(null);
+    try {
+      const result = await updateSavedTorNote(noteProject.torId, noteDraft, token);
+      setProjects((current) => current.map((project) => project.torId === noteProject.torId ? { ...project, note: result.note } : project));
+      setNoteProject(null);
+    } catch (requestError) {
+      setNoteError(requestError instanceof Error ? requestError.message : "บันทึกโน้ตไม่สำเร็จ");
+    } finally {
+      setNoteSaving(false);
     }
   }
 
@@ -90,13 +116,34 @@ export default function SavedProjectsPage() {
               agency: project.agencyName,
               budget: formatBudget(project.budget),
               deadline: formatDeadline(project.deadline),
+              note: project.note,
             }))}
             bookmarkedIds={ids}
             busyIds={busyIds}
             onToggleBookmark={(id) => { void toggleBookmark(id); }}
+            onEditNote={(match) => {
+              const project = projects.find((item) => item.torId === match.id);
+              if (project) openNote(project);
+            }}
           />
         )}
       </section>
+
+      {noteProject && <div className="saved-note-drawer" role="presentation">
+        <button className="saved-note-drawer__backdrop" type="button" aria-label="ปิดหน้าต่างโน้ต" onClick={() => setNoteProject(null)} />
+        <aside className="saved-note-drawer__panel" role="dialog" aria-modal="true" aria-labelledby="saved-note-heading">
+          <header>
+            <span><StickyNote size={19} /></span>
+            <div><p>โน้ตส่วนตัว</p><h2 id="saved-note-heading">{noteProject.title}</h2></div>
+            <button type="button" aria-label="ปิด" onClick={() => setNoteProject(null)}><X size={19} /></button>
+          </header>
+          <label htmlFor="saved-project-note">เขียนสิ่งที่อยากจำเกี่ยวกับโครงการนี้</label>
+          <textarea id="saved-project-note" value={noteDraft} maxLength={2000} autoFocus placeholder="เช่น นัดคุยทีมก่อนตัดสินใจเสนอราคา" onChange={(event) => setNoteDraft(event.target.value)} />
+          <small>{noteDraft.length.toLocaleString("th-TH")} / 2,000 ตัวอักษร</small>
+          {noteError && <p className="saved-note-drawer__error" role="alert">{noteError}</p>}
+          <footer><button type="button" onClick={() => setNoteProject(null)}>ยกเลิก</button><button className="saved-note-drawer__save" type="button" onClick={() => { void saveNote(); }} disabled={noteSaving}><Save size={16} />{noteSaving ? "กำลังบันทึก..." : "บันทึกโน้ต"}</button></footer>
+        </aside>
+      </div>}
     </AccountShell>
   );
 }
