@@ -2,6 +2,7 @@ import { NextFunction, Request, Response } from 'express';
 import { UserModel } from '../models/User';
 import { SessionModel } from '../models/Session';
 import { readSessionToken, sessionIdleExpiresAt } from '../services/session.service';
+import { logSecurityEvent } from './securityLog';
 
 export type AuthenticatedRequest = Request & { authUser: { id: string; role: 'vendor' | 'reviewer' | 'admin'; name: string } };
 type AuthUser = AuthenticatedRequest['authUser'];
@@ -32,6 +33,7 @@ async function authenticate(req: Request): Promise<AuthUser | null> {
 export async function requireAuthenticated(req: Request, res: Response, next: NextFunction): Promise<void> {
   const authUser = await authenticate(req);
   if (!authUser) {
+    logSecurityEvent('auth.authentication_failed', req);
     res.status(401).json({ error: 'Please sign in again to continue.' });
     return;
   }
@@ -43,6 +45,7 @@ export async function requireAuthenticated(req: Request, res: Response, next: Ne
 export function requireSelfOrAdmin(req: Request, res: Response, next: NextFunction): void {
   const { authUser } = req as AuthenticatedRequest;
   if (authUser.id !== req.params.userId && authUser.role !== 'admin') {
+    logSecurityEvent('auth.authorization_denied', req, { actorId: authUser.id });
     res.status(403).json({ error: 'You do not have permission to access this vendor profile.' });
     return;
   }
@@ -53,10 +56,12 @@ export function requireSelfOrAdmin(req: Request, res: Response, next: NextFuncti
 export async function requireAdmin(req: Request, res: Response, next: NextFunction): Promise<void> {
   const authUser = await authenticate(req);
   if (!authUser) {
+    logSecurityEvent('auth.authentication_failed', req);
     res.status(401).json({ error: 'Please sign in again to continue.' });
     return;
   }
   if (authUser.role !== 'admin') {
+    logSecurityEvent('auth.authorization_denied', req, { actorId: authUser.id });
     res.status(403).json({ error: 'Administrator access is required.' });
     return;
   }
@@ -68,10 +73,12 @@ export async function requireAdmin(req: Request, res: Response, next: NextFuncti
 export async function requireVendor(req: Request, res: Response, next: NextFunction): Promise<void> {
   const authUser = await authenticate(req);
   if (!authUser) {
+    logSecurityEvent('auth.authentication_failed', req);
     res.status(401).json({ error: 'Please sign in again to continue.' });
     return;
   }
   if (authUser.role !== 'vendor') {
+    logSecurityEvent('auth.authorization_denied', req, { actorId: authUser.id });
     res.status(403).json({ error: 'A vendor account is required.' });
     return;
   }

@@ -1,8 +1,10 @@
 import { Router } from 'express';
 import { login, logout, register, resendVerification, verifyEmail, requestPasswordReset, resetPassword, completeVendorOnboarding } from '../controllers/auth.controller';
 import { env } from '../config/env';
+import { authLimiter, loginLimiter } from '../middleware/security.middleware';
 
 const router = Router();
+router.use(authLimiter);
 
 router.post('/register', (req, res) => {
   register(req, res).catch(() => {
@@ -14,7 +16,7 @@ router.post('/complete-vendor-onboarding', (req, res) => {
     res.status(503).json({ error: 'Registration service is temporarily unavailable. Please try again later.' });
   });
 });
-router.post('/login', (req, res) => {
+router.post('/login', loginLimiter, (req, res) => {
   login(req, res).catch(() => {
     res.status(503).json({ error: 'Authentication service is temporarily unavailable. Please try again later.' });
   });

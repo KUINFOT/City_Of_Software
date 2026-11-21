@@ -11,6 +11,7 @@ import { hashPassword, verifyPassword } from '../services/password.service';
 import { createSessionId, createSessionToken, readSessionToken, sessionIdleExpiresAt } from '../services/session.service';
 import { PendingRegistration, readPendingRegistrationToken } from '../services/pending-registration.service';
 import { buildVendorProfileUpdate, upsertVendorProfile } from './vendorProfile.controller';
+import { logSecurityEvent } from '../middleware/securityLog';
 
 const REGISTERABLE_ROLES = new Set(['vendor', 'reviewer']);
 const COMMON_PASSWORDS = new Set(['password', 'password123', '1234567890', 'qwertyuiop', 'cityofsoftware']);
@@ -246,6 +247,7 @@ export async function logout(req: Request, res: Response): Promise<void> {
       { $set: { revokedAt: new Date() } }
     );
   }
+  logSecurityEvent('auth.logout', req, { actorId: session?.sub });
   // Deliberately idempotent: the browser can always complete local logout.
   res.status(204).end();
 }
@@ -256,6 +258,7 @@ export async function login(req: Request, res: Response): Promise<void> {
   const password = typeof req.body.password === 'string' ? req.body.password : '';
 
   if (!isEmail(email) || !password) {
+    logSecurityEvent('auth.login_failed', req, { reason: 'invalid_input' });
     res.status(400).json({ error: 'Email and password are required.' });
     return;
   }
@@ -263,6 +266,7 @@ export async function login(req: Request, res: Response): Promise<void> {
   const user = await UserModel.findOne({ email });
   const now = new Date();
   if (user?.loginLockedUntil && user.loginLockedUntil > now) {
+    logSecurityEvent('auth.login_failed', req, { actorId: user._id.toString(), reason: 'account_locked' });
     res.status(429).json({ error: 'Too many failed sign-in attempts. Please try again in 15 minutes.' });
     return;
   }
@@ -272,18 +276,22 @@ export async function login(req: Request, res: Response): Promise<void> {
       const lockUntil = failedAttempts >= MAX_FAILED_LOGIN_ATTEMPTS ? new Date(now.getTime() + LOGIN_LOCK_MS) : null;
       await UserModel.updateOne({ _id: user._id }, { $set: { failedLoginAttempts: failedAttempts, loginLockedUntil: lockUntil } });
       if (lockUntil) {
+        logSecurityEvent('auth.login_failed', req, { actorId: user._id.toString(), reason: 'account_locked' });
         res.status(429).json({ error: 'Too many failed sign-in attempts. Please try again in 15 minutes.' });
         return;
       }
     }
+    logSecurityEvent('auth.login_failed', req, { reason: 'invalid_credentials' });
     res.status(401).json({ error: 'Email or password is incorrect.' });
     return;
   }
   if (user.status === 'suspended') {
+    logSecurityEvent('auth.login_failed', req, { actorId: user._id.toString(), reason: 'suspended' });
     res.status(403).json({ error: 'This account has been suspended. Please contact an administrator.' });
     return;
   }
   if (!user.emailVerified) {
+    logSecurityEvent('auth.login_failed', req, { actorId: user._id.toString(), reason: 'email_unverified' });
     res.status(403).json({ error: 'Please verify your email address before signing in.', code: 'EMAIL_NOT_VERIFIED' });
     return;
   }
@@ -294,5 +302,6 @@ export async function login(req: Request, res: Response): Promise<void> {
   await user.save();
   const sessionId = createSessionId();
   await SessionModel.create({ userId: user._id, sessionId, lastActivityAt: now, expiresAt: sessionIdleExpiresAt(now) });
+  logSecurityEvent('auth.login_succeeded', req, { actorId: user._id.toString() });
   res.json({ user: publicUser(user), token: createSessionToken({ userId: user._id.toString(), role: user.role as 'vendor' | 'reviewer' | 'admin', sessionId, sessionVersion: user.sessionVersion }) });
 }

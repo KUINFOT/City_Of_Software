@@ -8,16 +8,14 @@ import { LocalBlobStore } from '../extraction/pipeline/storage';
 import { extractionConfig } from '../extraction/core/config';
 import { EXTRACTED_FIELD_KEYS, FIELD_TO_TOR_PATH, type ExtractedFieldKey } from '../extraction/core/fieldSchema';
 import { coerceFieldValue } from '../extraction/core/fieldCoercion';
+import type { AuthenticatedRequest } from '../middleware/auth.middleware';
 
 /** Mirrors Tor.ts's `procurementMethod` enum — kept local since nothing else
  *  needs to validate against it at the API boundary. */
 const PROCUREMENT_METHODS = ['e_bidding', 'selection', 'special_method', 'specific_method', 'other'] as const;
 
-// requireAdmin (wired in review.routes.ts) confirms the caller is an admin,
-// but every write endpoint below still takes `actorId` explicitly in the
-// request body rather than reading req.authUser.id — the audit trail
-// (FR-ADM-06) records whatever actorId the client sends, not necessarily the
-// authenticated caller. TODO: switch these to req.authUser.id.
+// The router's requireAdmin middleware sets authUser. All audit entries must
+// take their actor from that trusted server-side value, never request input.
 
 /**
  * POST /api/review/tors — US-041: an admin manually creates a TOR with an
@@ -40,14 +38,11 @@ const PROCUREMENT_METHODS = ['e_bidding', 'selection', 'special_method', 'specif
 export async function createManualTor(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const body = (req.body ?? {}) as Record<string, string | undefined>;
-    const { actorId, agencyId, title } = body;
+    const { agencyId, title } = body;
+    const actorId = (req as AuthenticatedRequest).authUser.id;
 
     if (!req.file) {
       res.status(400).json({ error: 'No file uploaded. Use multipart form field "file".' });
-      return;
-    }
-    if (!actorId) {
-      res.status(400).json({ error: 'actorId is required' });
       return;
     }
     if (!agencyId) {
@@ -231,11 +226,8 @@ export async function getReviewRecord(req: Request, res: Response, next: NextFun
  */
 export async function correctFields(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    const { actorId, corrections } = req.body as { actorId?: string; corrections?: Record<string, unknown> };
-    if (!actorId) {
-      res.status(400).json({ error: 'actorId is required' });
-      return;
-    }
+    const { corrections } = req.body as { corrections?: Record<string, unknown> };
+    const actorId = (req as AuthenticatedRequest).authUser.id;
     if (
       !corrections ||
       typeof corrections !== 'object' ||
@@ -329,11 +321,7 @@ export async function correctFields(req: Request, res: Response, next: NextFunct
 /** POST /api/review/queue/:id/approve — FR-ADM-05: publish, and audit it. */
 export async function approveRecord(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    const { actorId } = req.body as { actorId?: string };
-    if (!actorId) {
-      res.status(400).json({ error: 'actorId is required' });
-      return;
-    }
+    const actorId = (req as AuthenticatedRequest).authUser.id;
 
     const record = await TorModel.findById(req.params.id);
     if (!record) {
@@ -371,11 +359,8 @@ export async function approveRecord(req: Request, res: Response, next: NextFunct
 /** POST /api/review/queue/:id/reject — FR-ADM-03: reject with a recorded reason. */
 export async function rejectRecord(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    const { actorId, reason } = req.body as { actorId?: string; reason?: string };
-    if (!actorId) {
-      res.status(400).json({ error: 'actorId is required' });
-      return;
-    }
+    const { reason } = req.body as { reason?: string };
+    const actorId = (req as AuthenticatedRequest).authUser.id;
     if (!reason || !reason.trim()) {
       res.status(400).json({ error: 'reason is required to reject a record' });
       return;
@@ -422,15 +407,11 @@ export async function rejectRecord(req: Request, res: Response, next: NextFuncti
  */
 export async function supersedeRecord(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    const { actorId, targetTorId, reason } = req.body as {
-      actorId?: string;
+    const { targetTorId, reason } = req.body as {
       targetTorId?: string;
       reason?: string;
     };
-    if (!actorId) {
-      res.status(400).json({ error: 'actorId is required' });
-      return;
-    }
+    const actorId = (req as AuthenticatedRequest).authUser.id;
     if (!targetTorId) {
       res.status(400).json({ error: 'targetTorId is required' });
       return;
