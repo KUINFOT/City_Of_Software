@@ -6,6 +6,7 @@ import { VendorOnboardingModel } from '../models/VendorOnboarding';
 import { VendorProfileModel } from '../models/VendorProfile';
 import { SessionModel } from '../models/Session';
 import { OAuthLoginModel } from '../models/OAuthLogin';
+import { OAuthOnboardingModel } from '../models/OAuthOnboarding';
 import { env } from '../config/env';
 import { hashVerificationToken, issuePasswordResetEmail, issuePendingRegistrationEmail, issueVerificationEmail } from '../services/email-verification.service';
 import { hashPassword, verifyPassword } from '../services/password.service';
@@ -94,6 +95,24 @@ function googleLoginRedirect(res: Response, result: 'denied' | 'invalid' | 'unav
   res.redirect(302, url.toString());
 }
 
+function googleOnboardingRedirect(res: Response, onboardingToken: string): void {
+  const url = new URL('/oauth-onboarding', env.appUrl);
+  // Fragments are not sent to the app server, request logs, or referrers.
+  url.hash = new URLSearchParams({ onboarding: onboardingToken }).toString();
+  res.redirect(302, url.toString());
+}
+
+type GoogleOnboardingInput = { name: string; organization: string; phone: string; role: 'vendor' | 'reviewer' };
+
+function readGoogleOnboardingInput(body: Record<string, unknown>): GoogleOnboardingInput | null {
+  const name = readText(body.name);
+  const organization = readText(body.organization);
+  const phone = readText(body.phone);
+  const role = readText(body.role);
+  if (!name || !organization || !phone || (role !== 'vendor' && role !== 'reviewer')) return null;
+  return { name, organization, phone, role };
+}
+
 function createSessionResponse(user: { _id: { toString(): string }; role: string; sessionVersion: number; lastLoginAt?: Date | null }, now: Date) {
   const sessionId = createSessionId();
   return SessionModel.create({ userId: user._id.toString(), sessionId, lastActivityAt: now, expiresAt: sessionIdleExpiresAt(now) })
@@ -130,14 +149,31 @@ export async function completeGoogleCallback(req: Request, res: Response): Promi
     googleLoginRedirect(res, 'denied');
     return;
   }
-  const user = await UserModel.findOne({ email: identity.email });
-  if (!user || !user.emailVerified || user.status !== 'active' || (user.googleSubject && user.googleSubject !== identity.subject)) {
+  // `sub` is the provider identity. Email only bridges an existing local
+  // account once, after Google has asserted that the email is verified.
+  const user = await UserModel.findOne({ $or: [{ googleSubject: identity.subject }, { email: identity.email }] });
+  if (!user) {
+    const onboardingToken = randomBytes(32).toString('base64url');
+    await OAuthOnboardingModel.create({
+      tokenHash: hashOAuthLoginToken(onboardingToken),
+      googleSubject: identity.subject,
+      email: identity.email,
+      name: identity.name,
+      avatarUrl: identity.avatarUrl,
+      expiresAt: new Date(Date.now() + 10 * 60_000),
+    });
+    logSecurityEvent('auth.google_onboarding_started', req);
+    googleOnboardingRedirect(res, onboardingToken);
+    return;
+  }
+  if (!user.emailVerified || user.status !== 'active' || (user.googleSubject && user.googleSubject !== identity.subject)) {
     logSecurityEvent('auth.google_login_failed', req, { reason: 'account_not_eligible' });
     googleLoginRedirect(res, 'not_registered');
     return;
   }
 
   if (!user.googleSubject) user.googleSubject = identity.subject;
+  if (!user.avatarUrl && identity.avatarUrl) user.avatarUrl = identity.avatarUrl;
   user.lastLoginAt = new Date();
   await user.save();
 
@@ -179,6 +215,60 @@ export async function completeGoogleLogin(req: Request, res: Response): Promise<
   await user.save();
   const token = await createSessionResponse(user, now);
   res.json({ user: publicUser(user), token });
+}
+
+/** Reads verified claims without consuming the one-time registration capability. */
+export async function getGoogleOnboardingDetails(req: Request, res: Response): Promise<void> {
+  const onboardingToken = readOAuthValue(req.body?.token);
+  const onboarding = onboardingToken
+    ? await OAuthOnboardingModel.findOne({ tokenHash: hashOAuthLoginToken(onboardingToken), usedAt: null, expiresAt: { $gt: new Date() } }).lean()
+    : null;
+  if (!onboarding) {
+    res.status(400).json({ error: 'The Google registration request is invalid or has expired.' });
+    return;
+  }
+  res.json({ name: onboarding.name, email: onboarding.email, avatarUrl: onboarding.avatarUrl || '' });
+}
+
+/** Completes app-specific profile fields for a verified Google identity. */
+export async function completeGoogleOnboarding(req: Request, res: Response): Promise<void> {
+  const onboardingToken = readOAuthValue(req.body?.token);
+  const input = readGoogleOnboardingInput(req.body as Record<string, unknown>);
+  if (!onboardingToken || !input) {
+    res.status(400).json({ error: 'Name, organisation, phone number, and account role are required.' });
+    return;
+  }
+  const onboarding = await OAuthOnboardingModel.findOneAndUpdate(
+    { tokenHash: hashOAuthLoginToken(onboardingToken), usedAt: null, expiresAt: { $gt: new Date() } },
+    { $set: { usedAt: new Date() } },
+    { new: true }
+  );
+  if (!onboarding) {
+    res.status(400).json({ error: 'The Google registration request is invalid or has expired.' });
+    return;
+  }
+  const existing = await UserModel.findOne({ $or: [{ googleSubject: onboarding.googleSubject }, { email: onboarding.email }] });
+  if (existing) {
+    res.status(409).json({ error: 'An account using this Google identity or email already exists. Please sign in instead.' });
+    return;
+  }
+  // Password authentication remains unavailable until a dedicated set-password
+  // flow exists. This random value is never returned or stored in plain text.
+  const user = await UserModel.create({
+    ...input,
+    email: onboarding.email,
+    googleSubject: onboarding.googleSubject,
+    avatarUrl: onboarding.avatarUrl || '',
+    passwordHash: await hashPassword(randomBytes(32).toString('base64url')),
+    emailVerified: true,
+    status: 'active',
+  });
+  const now = new Date();
+  user.lastLoginAt = now;
+  await user.save();
+  const token = await createSessionResponse(user, now);
+  logSecurityEvent('auth.google_onboarding_completed', req, { actorId: user._id.toString() });
+  res.status(201).json({ user: publicUser(user), token });
 }
 
 /** POST /api/auth/register — email a reviewer registration link without persisting the account. */

@@ -11,6 +11,7 @@ export type AuthUser = {
 };
 
 export type AuthSession = { user: AuthUser; token: string };
+export type GoogleOnboardingProfile = { name: string; email: string; avatarUrl: string };
 export type RegistrationResponse = { nextStep: 'vendor_onboarding' | 'verify_email' };
 export type ManagedUser = Omit<AuthUser, 'status'> & { status: 'pending_verification' | 'active' | 'suspended'; emailVerified: boolean; createdAt: string; lastLoginAt: string | null };
 
@@ -52,6 +53,25 @@ export function googleLoginUrl(): string {
 
 export function completeGoogleLogin(token: string): Promise<AuthSession> {
   return request('/auth/google/complete', { token });
+}
+
+async function googleOnboardingRequest<T>(path: string, token: string, fields?: Record<string, unknown>): Promise<T> {
+  const response = await fetch(`${apiBaseUrl}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token, ...fields }),
+  });
+  const payload = (await response.json().catch(() => null)) as (T & { error?: string }) | null;
+  if (!response.ok || !payload) throw new Error(payload?.error ?? 'Unable to continue Google registration.');
+  return payload;
+}
+
+export function getGoogleOnboarding(token: string): Promise<GoogleOnboardingProfile> {
+  return googleOnboardingRequest('/auth/google/onboarding/details', token);
+}
+
+export function completeGoogleOnboarding(token: string, fields: { name: string; organization: string; phone: string; role: 'vendor' | 'reviewer' }): Promise<AuthSession> {
+  return googleOnboardingRequest<AuthSession>('/auth/google/onboarding', token, fields);
 }
 
 export async function logout(token: string): Promise<void> {

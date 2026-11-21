@@ -7,6 +7,7 @@ const userSchema = new Schema(
     // for the existing password-login flow, but never used to silently switch
     // a previously linked Google account.
     googleSubject: { type: String, unique: true, sparse: true, trim: true },
+    avatarUrl: { type: String, default: '' },
     passwordHash: { type: String, required: true },
     role: { type: String, enum: ['vendor', 'reviewer', 'admin', 'public'], default: 'vendor' },
     name: { type: String, required: true, trim: true },

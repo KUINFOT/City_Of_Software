@@ -5,7 +5,7 @@ import { env } from '../config/env';
 const STATE_TTL_MS = 10 * 60 * 1000;
 const GOOGLE_ISSUERS = new Set(['https://accounts.google.com', 'accounts.google.com']);
 
-export type GoogleIdentity = { subject: string; email: string; name: string };
+export type GoogleIdentity = { subject: string; email: string; name: string; avatarUrl: string };
 
 export function googleOAuthIsConfigured(): boolean {
   return Boolean(env.googleOAuthClientId && env.googleOAuthClientSecret && env.googleOAuthRedirectUri);
@@ -68,7 +68,12 @@ export async function readGoogleIdentity(code: string): Promise<GoogleIdentity |
     const ticket = await new OAuth2Client().verifyIdToken({ idToken: token.id_token, audience: env.googleOAuthClientId });
     const payload = ticket.getPayload();
     if (!payload?.sub || !payload.email || payload.email_verified !== true || !payload.iss || !GOOGLE_ISSUERS.has(payload.iss)) return null;
-    return { subject: payload.sub, email: payload.email.toLowerCase(), name: payload.name?.trim() || payload.email };
+    return {
+      subject: payload.sub,
+      email: payload.email.toLowerCase(),
+      name: payload.name?.trim() || payload.email,
+      avatarUrl: typeof payload.picture === 'string' ? payload.picture : '',
+    };
   } catch {
     return null;
   }

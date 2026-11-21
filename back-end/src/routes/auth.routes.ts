@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { beginGoogleLogin, completeGoogleCallback, completeGoogleLogin, login, logout, register, resendVerification, verifyEmail, requestPasswordReset, resetPassword, completeVendorOnboarding } from '../controllers/auth.controller';
+import { beginGoogleLogin, completeGoogleCallback, completeGoogleLogin, completeGoogleOnboarding, getGoogleOnboardingDetails, login, logout, register, resendVerification, verifyEmail, requestPasswordReset, resetPassword, completeVendorOnboarding } from '../controllers/auth.controller';
 import { env } from '../config/env';
 import { authLimiter, loginLimiter } from '../middleware/security.middleware';
 
@@ -27,6 +27,12 @@ router.get('/google/callback', loginLimiter, (req, res) => {
 });
 router.post('/google/complete', loginLimiter, (req, res) => {
   completeGoogleLogin(req, res).catch(() => res.status(503).json({ error: 'Google sign-in is temporarily unavailable. Please try again later.' }));
+});
+router.post('/google/onboarding/details', loginLimiter, (req, res) => {
+  getGoogleOnboardingDetails(req, res).catch(() => res.status(503).json({ error: 'Google registration is temporarily unavailable. Please try again later.' }));
+});
+router.post('/google/onboarding', loginLimiter, (req, res) => {
+  completeGoogleOnboarding(req, res).catch(() => res.status(503).json({ error: 'Google registration is temporarily unavailable. Please try again later.' }));
 });
 router.post('/logout', (req, res) => {
   logout(req, res).catch(() => {
