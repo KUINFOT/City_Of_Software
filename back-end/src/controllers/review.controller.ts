@@ -9,6 +9,7 @@ import { extractionConfig } from '../extraction/core/config';
 import { EXTRACTED_FIELD_KEYS, FIELD_TO_TOR_PATH, type ExtractedFieldKey } from '../extraction/core/fieldSchema';
 import { coerceFieldValue } from '../extraction/core/fieldCoercion';
 import type { AuthenticatedRequest } from '../middleware/auth.middleware';
+import { createDocumentAccessToken } from '../services/documentAccess.service';
 
 /** Mirrors Tor.ts's `procurementMethod` enum — kept local since nothing else
  *  needs to validate against it at the API boundary. */
@@ -170,9 +171,8 @@ export async function listReviewQueue(req: Request, res: Response, next: NextFun
  * Document rows it points to (e.g. one was deleted or reset elsewhere), and
  * handing back a dead id would build a link that always 404s. Mirrors
  * `listTorDocuments`'s own `DocumentModel.find({ _id: { $in: ... } })`
- * pattern for the same reason, minus that endpoint's published-only gate
- * and signed token — this is the admin correction flow, already reachable
- * unauthenticated (see getDocumentFile's own comment on why).
+ * pattern for the same reason. The admin endpoint is role-protected, then
+ * hands back the same short-lived document token used by the vendor flow.
  */
 export async function getReviewRecord(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
@@ -199,7 +199,9 @@ export async function getReviewRecord(req: Request, res: Response, next: NextFun
     response.documents = docs.map((doc) => ({
       _id: doc._id,
       originalName: doc.originalName,
-      fileUrl: doc.origin?.storageKey ? `/documents/${doc._id}/file` : null,
+      fileUrl: doc.origin?.storageKey
+        ? `/documents/${doc._id}/file?token=${createDocumentAccessToken(String(doc._id)).token}`
+        : null,
     }));
     res.json(response);
   } catch (err) {

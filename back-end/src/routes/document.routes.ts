@@ -11,9 +11,9 @@ import {
 
 const router = Router();
 
-// Read endpoints stay public — GET / backs the public /search page and GET
-// /:id/file is also reached unauthenticated via a signed per-document token
-// (see the handler's doc comment) by vendors, not just admins.
+// The list/detail endpoints back public search. File bytes are different:
+// `/:id/file` requires a signed per-document token issued only by an
+// authorized vendor or administrator flow.
 router.post('/upload', requireAdmin, upload.single('file'), requirePdfUpload, uploadDocument);
 router.get('/', listDocuments);
 router.get('/:id', getDocument);

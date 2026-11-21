@@ -294,16 +294,10 @@ export async function getDocument(
  * created through the older POST /api/documents/upload path below, which
  * never persists its buffer past the request.
  *
- * US-016 addition: a `?token=` query param, when present, is verified as a
- * signed document-access token (services/documentAccess.service.ts) scoped
- * to this exact document id — this is the "signed link" `GET /api/tors/:id
- * /documents` hands a vendor. A present-but-invalid/expired/mismatched token
- * is rejected with 403; a request with NO token at all is left exactly as
- * it was, because this same route is also called unauthenticated by the
- * admin document-correction flow (US-043), which has no token to send and
- * no auth system yet to gate it with. Making a token mandatory here would
- * break that caller without actually adding security, since nothing
- * protects this route from a direct, unauthenticated call either way yet.
+ * A short-lived `?token=` is mandatory and is verified against this exact
+ * document ID. Both vendor and admin-review endpoints mint the token only
+ * after their respective authorization checks, so guessing a document ID
+ * never becomes a file-read capability.
  */
 export async function getDocumentFile(
   req: Request,
@@ -318,12 +312,10 @@ export async function getDocumentFile(
     }
 
     const token = typeof req.query.token === 'string' ? req.query.token : null;
-    if (token) {
-      const payload = readDocumentAccessToken(token);
-      if (!payload || payload.documentId !== req.params.id) {
-        res.status(403).json({ error: 'This link has expired or is no longer valid.' });
-        return;
-      }
+    const payload = token ? readDocumentAccessToken(token) : null;
+    if (!payload || payload.documentId !== req.params.id) {
+      res.status(403).json({ error: 'This link has expired or is no longer valid.' });
+      return;
     }
 
     if (!doc.origin?.storageKey) {
