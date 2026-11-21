@@ -1,0 +1,67 @@
+name: OWASP ZAP Baseline
+
+on:
+  push:
+    branches: [main, 'codex/**']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  baseline:
+    name: Passive scan of public API
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      # These credentials exist only for the disposable CI stack. The health
+      # endpoint scanned below does not require a database connection.
+      MONGODB_URI: mongodb://127.0.0.1:27017/city_of_software_zap
+      AUTH_SECRET: zap-ci-only-not-a-real-secret
+      CORS_ORIGIN: http://localhost:3000
+      APP_URL: http://localhost:3000
+      PUBLIC_API_URL: http://localhost:4000/api
+      SCHEDULER_ENABLED: 'false'
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Start the disposable application stack
+        run: docker compose up --build --detach --wait --wait-timeout 180
+
+      # zap-baseline performs a passive scan only: it will not submit forms or
+      # mutate data. --network host lets the ZAP container reach the Compose
+      # port published on the Ubuntu runner. -I preserves the report when ZAP
+      # finds warnings, so the team can triage rather than hide findings.
+      - name: Run OWASP ZAP passive baseline scan
+        run: |
+          mkdir -p zap-reports
+          docker run --rm --network host \
+            --volume "$GITHUB_WORKSPACE/zap-reports:/zap/wrk/:rw" \
+            ghcr.io/zaproxy/zaproxy:stable \
+            zap-baseline.py \
+              -t http://127.0.0.1:4000/api/health \
+              -m 2 \
+              -I \
+              -r zap-baseline.html \
+              -J zap-baseline.json
+
+      - name: Upload ZAP report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zap-baseline-report
+          path: zap-reports/
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Show application logs on failure
+        if: failure()
+        run: docker compose logs --no-color
+
+      - name: Stop the disposable application stack
+        if: always()
+        run: docker compose down --volumes --remove-orphans
