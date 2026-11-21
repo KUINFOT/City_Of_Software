@@ -45,6 +45,11 @@ export const env = {
   mongodbUri: required('MONGODB_URI'),
   appUrl: optional('APP_URL', 'http://localhost:3000'),
   publicApiUrl: optional('PUBLIC_API_URL', 'http://localhost:4000/api'),
+  // Google OIDC is optional in local environments. Authentication routes only
+  // enable it when all three values are configured.
+  googleOAuthClientId: optional('GOOGLE_OAUTH_CLIENT_ID'),
+  googleOAuthClientSecret: optional('GOOGLE_OAUTH_CLIENT_SECRET'),
+  googleOAuthRedirectUri: optional('GOOGLE_OAUTH_REDIRECT_URI', 'http://localhost:4000/api/auth/google/callback'),
   gmailUser: optional('GMAIL_USER'),
   gmailAppPassword: optional('GMAIL_APP_PASSWORD'),
   resendApiKey: optional('RESEND_API_KEY'),

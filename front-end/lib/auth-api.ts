@@ -21,7 +21,7 @@ type MessageResponse = { message?: string; error?: string };
 
 const apiBaseUrl = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000/api';
 
-async function request(path: string, body: Credentials | Registration): Promise<AuthSession> {
+async function request(path: string, body: unknown): Promise<AuthSession> {
   const response = await fetch(`${apiBaseUrl}${path}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -44,6 +44,14 @@ async function requestMessage(path: string, body: Pick<Registration, 'email'> | 
 
 export function login(credentials: Credentials): Promise<AuthSession> {
   return request('/auth/login', credentials);
+}
+
+export function googleLoginUrl(): string {
+  return `${apiBaseUrl}/auth/google`;
+}
+
+export function completeGoogleLogin(token: string): Promise<AuthSession> {
+  return request('/auth/google/complete', { token });
 }
 
 export async function logout(token: string): Promise<void> {

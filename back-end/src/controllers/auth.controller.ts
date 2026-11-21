@@ -5,6 +5,7 @@ import { PasswordResetModel } from '../models/PasswordReset';
 import { VendorOnboardingModel } from '../models/VendorOnboarding';
 import { VendorProfileModel } from '../models/VendorProfile';
 import { SessionModel } from '../models/Session';
+import { OAuthLoginModel } from '../models/OAuthLogin';
 import { env } from '../config/env';
 import { hashVerificationToken, issuePasswordResetEmail, issuePendingRegistrationEmail, issueVerificationEmail } from '../services/email-verification.service';
 import { hashPassword, verifyPassword } from '../services/password.service';
@@ -12,6 +13,8 @@ import { createSessionId, createSessionToken, readSessionToken, sessionIdleExpir
 import { PendingRegistration, readPendingRegistrationToken } from '../services/pending-registration.service';
 import { buildVendorProfileUpdate, upsertVendorProfile } from './vendorProfile.controller';
 import { logSecurityEvent } from '../middleware/securityLog';
+import { createGoogleAuthorizationUrl, googleOAuthIsConfigured, isValidGoogleOAuthState, readGoogleIdentity } from '../services/google-oauth.service';
+import { createHash, randomBytes } from 'node:crypto';
 
 const REGISTERABLE_ROLES = new Set(['vendor', 'reviewer']);
 const COMMON_PASSWORDS = new Set(['password', 'password123', '1234567890', 'qwertyuiop', 'cityofsoftware']);
@@ -75,6 +78,107 @@ function verificationRedirect(res: Response, status: 'verified' | 'invalid'): vo
   const url = new URL('/verify-email', env.appUrl);
   url.searchParams.set('status', status);
   res.redirect(302, url.toString());
+}
+
+function readOAuthValue(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function hashOAuthLoginToken(token: string): string {
+  return createHash('sha256').update(token).digest('hex');
+}
+
+function googleLoginRedirect(res: Response, result: 'denied' | 'invalid' | 'unavailable' | 'not_registered'): void {
+  const url = new URL('/login', env.appUrl);
+  url.searchParams.set('oauth', result);
+  res.redirect(302, url.toString());
+}
+
+function createSessionResponse(user: { _id: { toString(): string }; role: string; sessionVersion: number; lastLoginAt?: Date | null }, now: Date) {
+  const sessionId = createSessionId();
+  return SessionModel.create({ userId: user._id.toString(), sessionId, lastActivityAt: now, expiresAt: sessionIdleExpiresAt(now) })
+    .then(() => createSessionToken({ userId: user._id.toString(), role: user.role as 'vendor' | 'reviewer' | 'admin', sessionId, sessionVersion: user.sessionVersion }));
+}
+
+/** GET /api/auth/google — send the browser to Google without exposing the client secret. */
+export function beginGoogleLogin(req: Request, res: Response): void {
+  if (!googleOAuthIsConfigured()) {
+    logSecurityEvent('auth.google_login_unavailable', req);
+    googleLoginRedirect(res, 'unavailable');
+    return;
+  }
+  res.redirect(302, createGoogleAuthorizationUrl());
+}
+
+/** GET /api/auth/google/callback — verify Google, then issue a one-time handoff in the URL fragment. */
+export async function completeGoogleCallback(req: Request, res: Response): Promise<void> {
+  if (!googleOAuthIsConfigured()) {
+    googleLoginRedirect(res, 'unavailable');
+    return;
+  }
+  const state = readOAuthValue(req.query.state);
+  const code = readOAuthValue(req.query.code);
+  if (readOAuthValue(req.query.error) || !code || !isValidGoogleOAuthState(state)) {
+    logSecurityEvent('auth.google_login_failed', req, { reason: 'invalid_callback' });
+    googleLoginRedirect(res, 'denied');
+    return;
+  }
+
+  const identity = await readGoogleIdentity(code);
+  if (!identity) {
+    logSecurityEvent('auth.google_login_failed', req, { reason: 'invalid_identity' });
+    googleLoginRedirect(res, 'denied');
+    return;
+  }
+  const user = await UserModel.findOne({ email: identity.email });
+  if (!user || !user.emailVerified || user.status !== 'active' || (user.googleSubject && user.googleSubject !== identity.subject)) {
+    logSecurityEvent('auth.google_login_failed', req, { reason: 'account_not_eligible' });
+    googleLoginRedirect(res, 'not_registered');
+    return;
+  }
+
+  if (!user.googleSubject) user.googleSubject = identity.subject;
+  user.lastLoginAt = new Date();
+  await user.save();
+
+  const handoffToken = randomBytes(32).toString('base64url');
+  await OAuthLoginModel.create({
+    tokenHash: hashOAuthLoginToken(handoffToken),
+    userId: user._id,
+    expiresAt: new Date(Date.now() + 60_000),
+  });
+  logSecurityEvent('auth.google_login_succeeded', req, { actorId: user._id.toString() });
+  const url = new URL('/login', env.appUrl);
+  url.hash = new URLSearchParams({ google_login: handoffToken }).toString();
+  res.redirect(302, url.toString());
+}
+
+/** POST /api/auth/google/complete — exchange the one-time OAuth handoff for an app session. */
+export async function completeGoogleLogin(req: Request, res: Response): Promise<void> {
+  const handoffToken = readOAuthValue(req.body?.token);
+  if (!handoffToken) {
+    res.status(400).json({ error: 'The Google sign-in request is invalid or has expired.' });
+    return;
+  }
+  const handoff = await OAuthLoginModel.findOneAndUpdate(
+    { tokenHash: hashOAuthLoginToken(handoffToken), usedAt: null, expiresAt: { $gt: new Date() } },
+    { $set: { usedAt: new Date() } },
+    { new: true }
+  );
+  if (!handoff) {
+    res.status(400).json({ error: 'The Google sign-in request is invalid or has expired.' });
+    return;
+  }
+  const user = await UserModel.findById(handoff.userId);
+  if (!user || user.status !== 'active' || !user.emailVerified) {
+    res.status(403).json({ error: 'This account is not available for sign-in.' });
+    return;
+  }
+  const now = new Date();
+  user.lastLoginAt = now;
+  await user.save();
+  const token = await createSessionResponse(user, now);
+  res.json({ user: publicUser(user), token });
 }
 
 /** POST /api/auth/register — email a reviewer registration link without persisting the account. */
@@ -300,8 +404,7 @@ export async function login(req: Request, res: Response): Promise<void> {
   user.failedLoginAttempts = 0;
   user.loginLockedUntil = null;
   await user.save();
-  const sessionId = createSessionId();
-  await SessionModel.create({ userId: user._id, sessionId, lastActivityAt: now, expiresAt: sessionIdleExpiresAt(now) });
+  const token = await createSessionResponse(user, now);
   logSecurityEvent('auth.login_succeeded', req, { actorId: user._id.toString() });
-  res.json({ user: publicUser(user), token: createSessionToken({ userId: user._id.toString(), role: user.role as 'vendor' | 'reviewer' | 'admin', sessionId, sessionVersion: user.sessionVersion }) });
+  res.json({ user: publicUser(user), token });
 }
