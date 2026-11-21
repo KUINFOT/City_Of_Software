@@ -1,4 +1,4 @@
-import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
+import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { env } from '../config/env';
 
 type SessionRole = 'vendor' | 'reviewer' | 'admin';
@@ -12,7 +12,10 @@ function sign(encodedPayload: string): string {
 }
 
 export function createSessionId(): string {
-  return randomUUID();
+  // UUID v4 exposes 122 random bits. Use a full 256-bit CSPRNG value because
+  // this identifier is persisted server-side and participates in session
+  // revocation decisions.
+  return randomBytes(32).toString('base64url');
 }
 
 export function sessionIdleExpiresAt(now = new Date()): Date {

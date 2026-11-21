@@ -135,7 +135,10 @@ docker compose up --build -d
   object storage, so back the volume up with the rest of the server.
 - **The extraction CLI** runs inside the deployed container, for example
   `docker compose exec back-end node dist/extraction/cli.js --list`.
-- Choosing a host and setting up a domain and TLS are not covered here: put a reverse proxy in
-  front of the two published ports.
+- Put a TLS-terminating reverse proxy in front of the app before public release. It must redirect
+  browser HTTP traffic to HTTPS, keep the API port inaccessible from the public internet, and set
+  `TRUST_PROXY_HOPS=1` on the API only when it is the one trusted proxy immediately upstream.
+  Keep the value at `0` for local/direct access. The API already emits HSTS, CSP and related
+  headers, but a TLS certificate and reverse-proxy network isolation are deployment requirements.
 
 CI builds both images on every pull request and checks that the stack starts and reports healthy.

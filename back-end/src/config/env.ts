@@ -16,6 +16,16 @@ function optional(name: string, fallback = ''): string {
   return process.env[name] ?? fallback;
 }
 
+function optionalInteger(name: string, fallback: number, minimum: number, maximum: number): number {
+  const value = process.env[name];
+  if (value === undefined || value === '') return fallback;
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < minimum || parsed > maximum) {
+    throw new Error(`${name} must be an integer between ${minimum} and ${maximum}.`);
+  }
+  return parsed;
+}
+
 /**
  * Typed, validated view of the environment. Importing this module throws
  * immediately if a required variable (e.g. MONGODB_URI) is missing.
@@ -23,6 +33,9 @@ function optional(name: string, fallback = ''): string {
 export const env = {
   port: Number(process.env.PORT ?? 4000),
   nodeEnv: optional('NODE_ENV', 'development'),
+  // Keep this at 0 when the API is directly exposed. Behind one controlled
+  // reverse proxy, set it to 1 so req.ip uses only proxy-supplied headers.
+  trustProxyHops: optionalInteger('TRUST_PROXY_HOPS', 0, 0, 2),
   // Accept a comma-separated allowlist so a local Next dev server can move
   // to its fallback port without turning a browser request into a CORS error.
   corsOrigins: optional('CORS_ORIGIN', 'http://localhost:3000')
