@@ -14,8 +14,9 @@ services:
     restart: unless-stopped
     security_opt:
       - no-new-privileges:true
-    cap_drop:
-      - ALL
+    # The official image needs its default capabilities briefly during startup
+    # to initialise its virus-definition directory, then drops privileges for
+    # the scanner process.  `cap_drop: ALL` prevents that initialisation.
     healthcheck:
       # The official image exposes clamd on its internal TCP port 3310.
       # `clamdscan --ping` defaults to a local Unix socket, which would mark
