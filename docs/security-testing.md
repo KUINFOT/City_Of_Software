@@ -72,3 +72,20 @@ enabled; the full digest comparison happens locally. The registration or reset
 is rejected if a match is found. If the privacy-preserving range request is
 unavailable, the application returns a retryable error rather than accepting
 the password without the check.
+
+## PDF malware scanning
+
+Every administrative PDF upload reaches `requireCleanUpload` after its size,
+extension, MIME, and magic-byte checks. In production, the middleware streams
+the in-memory file over ClamAV's private INSTREAM protocol and accepts it only
+after the scanner responds `OK`. An infected file returns `422`; a timeout,
+unreachable scanner, or malformed scanner response returns `503`, so it cannot
+fall through to the PDF parser or storage. The filename and scanner signature
+are not included in the response or security event.
+
+Docker Compose starts a private `clamav` service and waits for its health check
+before starting the API. For a non-Docker deployment, set
+`UPLOAD_MALWARE_SCAN_MODE=required`, point the scanner host and port at a
+private ClamAV daemon, and verify an upload is rejected while that daemon is
+stopped. `disabled` is limited to local development; production defaults to
+`required` even if the variable is not set.

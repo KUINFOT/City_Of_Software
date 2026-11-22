@@ -8,6 +8,21 @@
 name: city-of-software
 
 services:
+  clamav:
+    image: clamav/clamav:stable
+    init: true
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD-SHELL", "clamdscan --ping 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 2m
+
   back-end:
     build:
       context: ./back-end
@@ -53,6 +68,13 @@ services:
       RESEND_API_KEY: ${RESEND_API_KEY:-}
       EMAIL_FROM: ${EMAIL_FROM:-}
 
+      # ClamAV is isolated on the Compose network and is required before a
+      # user-provided PDF reaches an extractor or persistent storage.
+      UPLOAD_MALWARE_SCAN_MODE: required
+      UPLOAD_MALWARE_SCANNER_HOST: clamav
+      UPLOAD_MALWARE_SCANNER_PORT: "3310"
+      UPLOAD_MALWARE_SCAN_TIMEOUT_MS: "10000"
+
       # Google Cloud. Leave GCP_PROJECT_ID empty to run on the built-in stubs.
       GCP_PROJECT_ID: ${GCP_PROJECT_ID:-}
       GCP_LOCATION: ${GCP_LOCATION:-us}
@@ -71,6 +93,9 @@ services:
       - ${GCP_CREDENTIALS_DIR:-./secrets}:/run/secrets:ro
     ports:
       - "${BACKEND_PORT:-4000}:4000"
+    depends_on:
+      clamav:
+        condition: service_healthy
 
   front-end:
     build:

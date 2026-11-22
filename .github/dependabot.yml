@@ -1,0 +1,19 @@
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /back-end
+    schedule:
+      interval: weekly
+    labels: [dependencies, security]
+    groups:
+      production-dependencies:
+        dependency-type: production
+
+  - package-ecosystem: npm
+    directory: /front-end
+    schedule:
+      interval: weekly
+    labels: [dependencies, security]
+    groups:
+      production-dependencies:
+        dependency-type: production

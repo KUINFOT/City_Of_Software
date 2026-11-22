@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { requirePdfUpload, upload } from '../middleware/upload';
+import { requireCleanUpload, requirePdfUpload, upload } from '../middleware/upload';
 import { requireAdmin } from '../middleware/auth.middleware';
 import {
   createManualTor,
@@ -14,7 +14,7 @@ import {
 const router = Router();
 
 router.use(requireAdmin);
-router.post('/tors', upload.single('file'), requirePdfUpload, createManualTor);
+router.post('/tors', upload.single('file'), requirePdfUpload, requireCleanUpload, createManualTor);
 router.get('/queue', listReviewQueue);
 router.get('/queue/:id', getReviewRecord);
 router.patch('/queue/:id/fields', correctFields);
