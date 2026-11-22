@@ -1,8 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { FormEvent, Suspense, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { FormEvent, Suspense, useEffect, useState } from "react";
 import { ArrowLeft, Check, CircleAlert, CircleCheckBig, Eye, EyeOff, KeyRound, LoaderCircle, ShieldCheck } from "lucide-react";
 import { Brand } from "@/components/brand";
 import { resetPassword } from "@/lib/auth-api";
@@ -12,8 +11,7 @@ function PasswordField({ id, label, value, onChange, visible, onToggle, disabled
 }
 
 function ResetPasswordContent() {
-  const searchParams = useSearchParams();
-  const token = searchParams.get("token") ?? "";
+  const [token, setToken] = useState("");
   const [password, setPassword] = useState("");
   const [confirmation, setConfirmation] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -23,6 +21,14 @@ function ResetPasswordContent() {
   const [submitting, setSubmitting] = useState(false);
   const meetsLength = password.length >= 10;
   const passwordsMatch = password.length > 0 && password === confirmation;
+
+  useEffect(() => {
+    const fragment = new URLSearchParams(window.location.hash.slice(1));
+    const resetToken = fragment.get("token") ?? "";
+    setToken(resetToken);
+    // Remove the one-use token from the address bar immediately after reading it.
+    if (window.location.hash) window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
+  }, []);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();

@@ -51,6 +51,23 @@ export function googleLoginUrl(): string {
   return `${apiBaseUrl}/auth/google`;
 }
 
+export async function getGoogleLinkStatus(token: string): Promise<{ linked: boolean }> {
+  const response = await fetch(`${apiBaseUrl}/auth/google/link-status`, { headers: { Authorization: `Bearer ${token}` } });
+  const payload = (await response.json().catch(() => null)) as { linked?: boolean; error?: string } | null;
+  if (!response.ok || !payload || typeof payload.linked !== 'boolean') throw new Error(payload?.error ?? 'Unable to read Google connection status.');
+  return { linked: payload.linked };
+}
+
+export async function beginGoogleLink(token: string): Promise<{ authorizationUrl: string }> {
+  const response = await fetch(`${apiBaseUrl}/auth/google/link`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  const payload = (await response.json().catch(() => null)) as { authorizationUrl?: string; error?: string } | null;
+  if (!response.ok || !payload?.authorizationUrl) throw new Error(payload?.error ?? 'Unable to start Google connection.');
+  return { authorizationUrl: payload.authorizationUrl };
+}
+
 export function completeGoogleLogin(token: string): Promise<AuthSession> {
   return request('/auth/google/complete', { token });
 }
@@ -90,6 +107,10 @@ export async function register(input: Registration): Promise<RegistrationRespons
 
 export function resendVerification(email: string): Promise<void> {
   return requestMessage('/auth/resend-verification', { email });
+}
+
+export function verifyEmail(token: string): Promise<void> {
+  return requestMessage('/auth/verify-email', { token, password: '' });
 }
 
 export function requestPasswordReset(email: string): Promise<void> {

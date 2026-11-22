@@ -20,6 +20,7 @@ export default function LoginPage() {
     const oauthResult = new URLSearchParams(window.location.search).get("oauth");
     if (!handoffToken) {
       if (oauthResult === "not_registered") setError("บัญชี Google นี้ยังไม่มีบัญชีที่ยืนยันอีเมลในระบบ");
+      else if (oauthResult === "link_required") setError("อีเมลนี้มีบัญชีอยู่แล้ว โปรดเข้าสู่ระบบด้วยรหัสผ่าน แล้วเชื่อมต่อ Google จากหน้า Settings");
       else if (oauthResult === "denied") setError("ไม่สามารถยืนยันตัวตนกับ Google ได้ กรุณาลองใหม่อีกครั้ง");
       else if (oauthResult === "unavailable") setError("ยังไม่ได้ตั้งค่า Google sign-in บนเซิร์ฟเวอร์");
       return;

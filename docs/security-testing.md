@@ -35,3 +35,40 @@ scan against a non-production environment:
 
 The CI scan deliberately uses temporary environment values and only visits
 `/api/health`; it never receives production credentials or a production URL.
+
+## Extraction outbound-request tests
+
+The extraction client resolves every discovered destination before connecting
+and accepts only public HTTP(S) addresses on ports 80 or 443. Redirects are
+followed manually so their destinations receive the same validation. The
+regression suite covers loopback, private, link-local, documentation,
+IPv4-mapped IPv6 addresses, and a redirect that attempts to reach
+`127.0.0.1`; the latter proves the second request is not sent. TLS certificate
+validation is never bypassed.
+
+## OAuth account linking
+
+An existing account is never linked merely because its email matches a Google
+identity. Connecting Google starts from an authenticated application session
+and uses a hashed, single-use state record that expires after ten minutes. The
+callback also verifies that the originating server-side session remains active
+and has not been invalidated before it writes the Google subject identifier.
+
+## Email action tokens
+
+Verification and password-reset links put their one-use token in the URL
+fragment (`#token=…`), not a query string. The client removes the fragment
+from the address bar before it posts the token to the corresponding
+authentication endpoint. This keeps newly issued tokens out of server request
+URLs, access logs, and referrer headers while preserving the existing one-use
+and expiry checks.
+
+## Compromised-password screening
+
+Registration, vendor-onboarding completion, and password reset screen a
+candidate password against HIBP's Pwned Passwords range API. The service gets
+only the first five characters of a SHA-1 digest, with response padding
+enabled; the full digest comparison happens locally. The registration or reset
+is rejected if a match is found. If the privacy-preserving range request is
+unavailable, the application returns a retryable error rather than accepting
+the password without the check.

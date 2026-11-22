@@ -7,15 +7,18 @@ import { VendorProfileModel } from '../models/VendorProfile';
 import { SessionModel } from '../models/Session';
 import { OAuthLoginModel } from '../models/OAuthLogin';
 import { OAuthOnboardingModel } from '../models/OAuthOnboarding';
+import { OAuthAccountLinkModel } from '../models/OAuthAccountLink';
 import { env } from '../config/env';
 import { hashVerificationToken, issuePasswordResetEmail, issuePendingRegistrationEmail, issueVerificationEmail } from '../services/email-verification.service';
 import { hashPassword, verifyPassword } from '../services/password.service';
+import { screenPassword } from '../services/password-breach.service';
 import { createSessionId, createSessionToken, readSessionToken, sessionIdleExpiresAt } from '../services/session.service';
 import { PendingRegistration, readPendingRegistrationToken } from '../services/pending-registration.service';
 import { buildVendorProfileUpdate, upsertVendorProfile } from './vendorProfile.controller';
 import { logSecurityEvent } from '../middleware/securityLog';
 import { createGoogleAuthorizationUrl, googleOAuthIsConfigured, isValidGoogleOAuthState, readGoogleIdentity } from '../services/google-oauth.service';
 import { createHash, randomBytes } from 'node:crypto';
+import type { AuthenticatedRequest } from '../middleware/auth.middleware';
 
 const REGISTERABLE_ROLES = new Set(['vendor', 'reviewer']);
 const COMMON_PASSWORDS = new Set(['password', 'password123', '1234567890', 'qwertyuiop', 'cityofsoftware']);
@@ -34,6 +37,13 @@ function normalizeEmail(value: unknown): string {
 
 function isEmail(value: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+}
+
+async function passwordScreeningError(password: string): Promise<{ status: 400 | 503; error: string } | null> {
+  const result = await screenPassword(password);
+  if (result === 'accepted') return null;
+  if (result === 'rejected') return { status: 400, error: 'Choose a password that has not appeared in a known data breach.' };
+  return { status: 503, error: 'Password security check is temporarily unavailable. Please try again later.' };
 }
 
 type RegistrationInput = Omit<PendingRegistration, 'passwordHash' | 'profile'> & { password: string };
@@ -75,12 +85,6 @@ function publicUser(user: { _id: { toString(): string }; name: string; email: st
   };
 }
 
-function verificationRedirect(res: Response, status: 'verified' | 'invalid'): void {
-  const url = new URL('/verify-email', env.appUrl);
-  url.searchParams.set('status', status);
-  res.redirect(302, url.toString());
-}
-
 function readOAuthValue(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
 }
@@ -89,9 +93,15 @@ function hashOAuthLoginToken(token: string): string {
   return createHash('sha256').update(token).digest('hex');
 }
 
-function googleLoginRedirect(res: Response, result: 'denied' | 'invalid' | 'unavailable' | 'not_registered'): void {
+function googleLoginRedirect(res: Response, result: 'denied' | 'invalid' | 'unavailable' | 'not_registered' | 'link_required'): void {
   const url = new URL('/login', env.appUrl);
   url.searchParams.set('oauth', result);
+  res.redirect(302, url.toString());
+}
+
+function googleLinkRedirect(res: Response, result: 'linked' | 'denied' | 'expired' | 'conflict' | 'unavailable'): void {
+  const url = new URL('/settings', env.appUrl);
+  url.searchParams.set('google', result);
   res.redirect(302, url.toString());
 }
 
@@ -129,6 +139,48 @@ export function beginGoogleLogin(req: Request, res: Response): void {
   res.redirect(302, createGoogleAuthorizationUrl());
 }
 
+/** POST /api/auth/google/link — create a one-use link state for the active app session. */
+export async function beginGoogleLink(req: Request, res: Response): Promise<void> {
+  if (!googleOAuthIsConfigured()) {
+    res.status(503).json({ error: 'Google sign-in is not configured on this server.' });
+    return;
+  }
+  const authUser = (req as AuthenticatedRequest).authUser;
+  const bearer = req.header('authorization')?.match(/^Bearer\s+(.+)$/i)?.[1];
+  const session = bearer ? readSessionToken(bearer) : null;
+  if (!session || session.sub !== authUser.id) {
+    res.status(401).json({ error: 'Please sign in again before connecting Google.' });
+    return;
+  }
+  const user = await UserModel.findById(authUser.id).select('googleSubject sessionVersion');
+  if (!user) {
+    res.status(401).json({ error: 'Please sign in again before connecting Google.' });
+    return;
+  }
+  if (user.googleSubject) {
+    res.status(409).json({ error: 'A Google account is already connected to this account.' });
+    return;
+  }
+
+  const state = randomBytes(32).toString('base64url');
+  await OAuthAccountLinkModel.create({
+    stateHash: hashOAuthLoginToken(state),
+    userId: user._id,
+    sessionId: session.sid,
+    sessionVersion: user.sessionVersion,
+    expiresAt: new Date(Date.now() + 10 * 60_000),
+  });
+  logSecurityEvent('auth.google_link_started', req, { actorId: authUser.id });
+  res.json({ authorizationUrl: createGoogleAuthorizationUrl(state) });
+}
+
+/** GET /api/auth/google/link-status — exposes only whether a provider is connected. */
+export async function getGoogleLinkStatus(req: Request, res: Response): Promise<void> {
+  const authUser = (req as AuthenticatedRequest).authUser;
+  const user = await UserModel.findById(authUser.id).select('googleSubject').lean();
+  res.json({ linked: Boolean(user?.googleSubject) });
+}
+
 /** GET /api/auth/google/callback — verify Google, then issue a one-time handoff in the URL fragment. */
 export async function completeGoogleCallback(req: Request, res: Response): Promise<void> {
   if (!googleOAuthIsConfigured()) {
@@ -137,22 +189,68 @@ export async function completeGoogleCallback(req: Request, res: Response): Promi
   }
   const state = readOAuthValue(req.query.state);
   const code = readOAuthValue(req.query.code);
-  if (readOAuthValue(req.query.error) || !code || !isValidGoogleOAuthState(state)) {
+  const linkRequest = state
+    ? await OAuthAccountLinkModel.findOne({ stateHash: hashOAuthLoginToken(state), usedAt: null, expiresAt: { $gt: new Date() } }).lean()
+    : null;
+  if (readOAuthValue(req.query.error) || !code || (!linkRequest && !isValidGoogleOAuthState(state))) {
     logSecurityEvent('auth.google_login_failed', req, { reason: 'invalid_callback' });
-    googleLoginRedirect(res, 'denied');
+    if (linkRequest) googleLinkRedirect(res, 'denied');
+    else googleLoginRedirect(res, 'denied');
     return;
   }
 
   const identity = await readGoogleIdentity(code);
   if (!identity) {
     logSecurityEvent('auth.google_login_failed', req, { reason: 'invalid_identity' });
-    googleLoginRedirect(res, 'denied');
+    if (linkRequest) googleLinkRedirect(res, 'denied');
+    else googleLoginRedirect(res, 'denied');
     return;
   }
-  // `sub` is the provider identity. Email only bridges an existing local
-  // account once, after Google has asserted that the email is verified.
-  const user = await UserModel.findOne({ $or: [{ googleSubject: identity.subject }, { email: identity.email }] });
+  if (linkRequest) {
+    const consumedLink = await OAuthAccountLinkModel.findOneAndUpdate(
+      { _id: linkRequest._id, usedAt: null, expiresAt: { $gt: new Date() } },
+      { $set: { usedAt: new Date() } },
+      { new: true }
+    );
+    if (!consumedLink) {
+      googleLinkRedirect(res, 'expired');
+      return;
+    }
+    const activeSession = await SessionModel.exists({
+      userId: consumedLink.userId,
+      sessionId: consumedLink.sessionId,
+      revokedAt: null,
+      expiresAt: { $gt: new Date() },
+    });
+    const targetUser = activeSession ? await UserModel.findById(consumedLink.userId) : null;
+    if (!targetUser || targetUser.status !== 'active' || targetUser.sessionVersion !== consumedLink.sessionVersion) {
+      googleLinkRedirect(res, 'expired');
+      return;
+    }
+    const existingGoogleOwner = await UserModel.findOne({ googleSubject: identity.subject }).select('_id');
+    if (existingGoogleOwner && existingGoogleOwner._id.toString() !== targetUser._id.toString()) {
+      logSecurityEvent('auth.google_link_failed', req, { actorId: targetUser._id.toString(), reason: 'provider_already_linked' });
+      googleLinkRedirect(res, 'conflict');
+      return;
+    }
+    targetUser.googleSubject = identity.subject;
+    if (!targetUser.avatarUrl && identity.avatarUrl) targetUser.avatarUrl = identity.avatarUrl;
+    await targetUser.save();
+    logSecurityEvent('auth.google_link_succeeded', req, { actorId: targetUser._id.toString() });
+    googleLinkRedirect(res, 'linked');
+    return;
+  }
+
+  // `sub` is the provider identity. A matching email is NOT enough to add a
+  // new authentication method; the account owner must connect it from Settings.
+  const user = await UserModel.findOne({ googleSubject: identity.subject });
   if (!user) {
+    const localAccount = await UserModel.exists({ email: identity.email });
+    if (localAccount) {
+      logSecurityEvent('auth.google_login_failed', req, { reason: 'link_required' });
+      googleLoginRedirect(res, 'link_required');
+      return;
+    }
     const onboardingToken = randomBytes(32).toString('base64url');
     await OAuthOnboardingModel.create({
       tokenHash: hashOAuthLoginToken(onboardingToken),
@@ -278,6 +376,11 @@ export async function register(req: Request, res: Response): Promise<void> {
     res.status(400).json({ error: 'Please provide a name, organization, phone number, valid email, a non-common password of at least 10 characters, and valid account role.' });
     return;
   }
+  const screeningError = await passwordScreeningError(input.password);
+  if (screeningError) {
+    res.status(screeningError.status).json({ error: screeningError.error });
+    return;
+  }
   if (input.role === 'vendor') {
     // This first step deliberately performs a read-only availability check:
     // the vendor draft itself remains in the browser until email verification.
@@ -306,6 +409,11 @@ export async function completeVendorOnboarding(req: Request, res: Response): Pro
   const input = readRegistrationInput(req.body.registration as Record<string, unknown>);
   if (!input || input.role !== 'vendor') {
     res.status(400).json({ error: 'Your account details are missing or invalid. Please return to registration.' });
+    return;
+  }
+  const screeningError = await passwordScreeningError(input.password);
+  if (screeningError) {
+    res.status(screeningError.status).json({ error: screeningError.error });
     return;
   }
   try {
@@ -342,11 +450,11 @@ export async function resendVerification(req: Request, res: Response): Promise<v
   res.json({ message: 'If this account needs verification, a new email has been sent.' });
 }
 
-/** GET /api/auth/verify-email — consume a single-use verification link, then return to the app. */
+/** POST /api/auth/verify-email — consume a single-use verification token from the browser fragment. */
 export async function verifyEmail(req: Request, res: Response): Promise<void> {
-  const token = readText(req.query.token);
+  const token = readText(req.body.token);
   if (!token) {
-    verificationRedirect(res, 'invalid');
+    res.status(400).json({ error: 'This verification link is invalid or expired.' });
     return;
   }
 
@@ -354,7 +462,7 @@ export async function verifyEmail(req: Request, res: Response): Promise<void> {
   if (pendingRegistration) {
     const existing = await UserModel.findOne({ email: pendingRegistration.email });
     if (existing?.emailVerified) {
-      verificationRedirect(res, 'invalid');
+      res.status(400).json({ error: 'This verification link is invalid or expired.' });
       return;
     }
     // Accounts created by the old flow but never verified are safe to replace:
@@ -380,7 +488,7 @@ export async function verifyEmail(req: Request, res: Response): Promise<void> {
     if (pendingRegistration.role === 'vendor' && pendingRegistration.profile) {
       await upsertVendorProfile(user._id.toString(), pendingRegistration.profile);
     }
-    verificationRedirect(res, 'verified');
+    res.json({ message: 'Your email address has been verified.' });
     return;
   }
 
@@ -390,12 +498,12 @@ export async function verifyEmail(req: Request, res: Response): Promise<void> {
     { new: true }
   );
   if (!verification) {
-    verificationRedirect(res, 'invalid');
+    res.status(400).json({ error: 'This verification link is invalid or expired.' });
     return;
   }
 
   await UserModel.findByIdAndUpdate(verification.userId, { $set: { emailVerified: true, status: 'active' } });
-  verificationRedirect(res, 'verified');
+  res.json({ message: 'Your email address has been verified.' });
 }
 
 export async function requestPasswordReset(req: Request, res: Response): Promise<void> {
@@ -421,6 +529,11 @@ export async function requestPasswordReset(req: Request, res: Response): Promise
 export async function resetPassword(req: Request, res: Response): Promise<void> {
   const token = readText(req.body.token); const password = typeof req.body.password === 'string' ? req.body.password : '';
   if (!token || password.length < 10 || COMMON_PASSWORDS.has(password.toLowerCase())) { res.status(400).json({ error: 'Choose a non-common password of at least 10 characters.' }); return; }
+  const screeningError = await passwordScreeningError(password);
+  if (screeningError) {
+    res.status(screeningError.status).json({ error: screeningError.error });
+    return;
+  }
   const reset = await PasswordResetModel.findOneAndUpdate({ tokenHash: hashVerificationToken(token), usedAt: null, expiresAt: { $gt: new Date() } }, { $set: { usedAt: new Date() } }, { new: true });
   if (!reset) { res.status(400).json({ error: 'This password reset link is invalid or expired.' }); return; }
   const now = new Date();

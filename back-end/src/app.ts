@@ -15,7 +15,7 @@ export function createApp() {
   app.use(assignRequestId);
   app.use(securityHeaders);
   app.use(cors({ origin: env.corsOrigins }));
-  // Do not log query strings: reset and signed-document links carry a token.
+  // Do not log query strings: signed-document links can carry a token.
   morgan.token('safe-url', (req) => (req.url ?? '/').split('?')[0]);
   app.use(morgan(':method :safe-url :status :response-time ms request_id=:res[X-Request-ID]'));
   app.use(express.json({ limit: '100kb' }));

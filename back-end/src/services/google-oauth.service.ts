@@ -32,14 +32,14 @@ export function isValidGoogleOAuthState(state: string, now = Date.now()): boolea
   return expected.length === received.length && timingSafeEqual(expected, received);
 }
 
-export function createGoogleAuthorizationUrl(): string {
+export function createGoogleAuthorizationUrl(state = createGoogleOAuthState()): string {
   const url = new URL('https://accounts.google.com/o/oauth2/v2/auth');
   url.search = new URLSearchParams({
     client_id: env.googleOAuthClientId,
     redirect_uri: env.googleOAuthRedirectUri,
     response_type: 'code',
     scope: 'openid email profile',
-    state: createGoogleOAuthState(),
+    state,
     // Forces Google to show a chooser when several accounts are active. No
     // refresh token is requested because this feature only authenticates users.
     prompt: 'select_account',
