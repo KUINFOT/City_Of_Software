@@ -89,3 +89,14 @@ before starting the API. For a non-Docker deployment, set
 private ClamAV daemon, and verify an upload is rejected while that daemon is
 stopped. `disabled` is limited to local development; production defaults to
 `required` even if the variable is not set.
+
+## Audit-record immutability
+
+`AuditLog` permits insertions only through the application model. Document
+saves for an existing entry and all model update, replace, and delete queries
+are rejected. This prevents an ordinary future API change from quietly adding
+a rewrite/delete path for review and account-administration evidence. It is
+defence in depth rather than a substitute for database privileges: the
+production MongoDB role used by the API must also have no update or delete
+permission on the audit-log collection, and exported logs should be retained
+in centralized append-only storage.
