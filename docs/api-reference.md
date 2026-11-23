@@ -14,7 +14,11 @@ Every HTTP endpoint the back-end serves, with who may call it, what it accepts a
 
 **Base URL.** `http://localhost:4000/api` locally. Everything is under `/api`.
 
-**Format.** Requests and responses are JSON (`Content-Type: application/json`), except the two file-upload routes, which are `multipart/form-data`. Dates are ISO 8601 in UTC. Ids are 24-character MongoDB ObjectIds as strings. Money is a plain number in Thai baht (THB), nominal.
+**Format.** Requests and responses are JSON (`Content-Type: application/json`), except the two file-upload routes, which are `multipart/form-data`. JSON and form bodies may be up to **100 KB**; uploads are one PDF of up to 20 MB. Dates are ISO 8601 in UTC. Ids are 24-character MongoDB ObjectIds as strings. Money is a plain number in Thai baht (THB), nominal.
+
+**Response headers.** Every response carries an `X-Request-ID` (quote it when reporting a problem; it also appears in the server's logs), `Cache-Control: no-store`, and security headers: `Strict-Transport-Security`, a deny-all `Content-Security-Policy` and `Referrer-Policy: no-referrer`.
+
+**Rate limits.** Per client IP: 10 per 15 minutes for `POST /auth/login` and the Google sign-in endpoints, 20 per 15 minutes for the other `POST` routes under `/auth`, and 120 per minute for every write (`POST`, `PUT`, `PATCH`, `DELETE`) anywhere. Reads are not limited. Over a limit: **429** `{"error":"Too many requests. Please try again later."}` with standard `RateLimit` and `RateLimit-Policy` headers.
 
 **Authentication.** Protected routes need the token from `POST /auth/login`:
 
@@ -43,16 +47,18 @@ A missing, expired or revoked token gives **401** `{"error":"Please sign in agai
 | 403 | Signed in with the wrong role, suspended, or not verified |
 | 404 | Not found. Also returned for records that exist but are not published, so the API never reveals unpublished records |
 | 409 | The record is in the wrong state (for example approving something that is not pending), or the resource already exists |
-| 429 | Too many attempts (sign-in lockout, verification email cooldown) |
-| 500 | Unexpected error. `error` carries the server's message |
-| 503 | A sign-up, sign-in or profile route failed unexpectedly (generic message) |
+| 415 | The upload is not a real PDF |
+| 422 | The upload failed the malware scan |
+| 429 | Too many attempts: the sign-in lockout, the verification-email cooldown, or a [rate limit](#conventions) |
+| 500 | Unexpected error. The body is always the generic `{"error":"Internal Server Error"}`; the details go to the server's log |
+| 503 | A dependency is unavailable (the breached-password check, the malware scanner, Google sign-in not configured), or a sign-up, sign-in or profile route failed unexpectedly |
 
 **Lists.** There is no pagination. Several endpoints take `limit`; the defaults and maximums are stated where they apply.
 
-**Unknown routes** return `404 { "error": "Route not found: GET /api/nope" }`.
+**Unknown routes** return `404 { "error": "Route not found." }`.
 
 > [!NOTE]
-> A few read routes (`GET /tors/:id`, `GET /documents/:id`, the review-queue routes) pass the id straight to the database driver. A malformed id (not 24 hex characters) therefore comes back as a **500** with the driver's cast message instead of a 404. Saved-TOR routes and analytics validate ids and answer 404 or 400.
+> A malformed id (not 24 hex characters) gets the same **404** as a missing record on the TOR and document routes, and 404 or 400 on saved-TOR, analytics and supersede routes. The other review-queue routes (`GET`, `PATCH`, `approve`, `reject` on `/review/queue/:id`) still pass it to the database driver and answer **500**.
 
 ---
 
@@ -80,15 +86,16 @@ Public. Step one of sign-up.
 | --- | --- |
 | `name`, `organization`, `phone` | Required text |
 | `email` | Required; lower-cased |
-| `password` | Required; at least 10 characters, not a very common password |
+| `password` | Required; at least 10 characters, not a very common password, not found in a known data breach |
 | `role` | `vendor` (default) or `reviewer` |
 
 | Result | Meaning |
 | --- | --- |
 | **200** `{ "message", "nextStep": "vendor_onboarding" }` | Vendor: the address is free. Continue to the profile step. **Nothing has been saved or sent** |
 | **202** `{ "message", "nextStep": "verify_email" }` | BMA official: the verification email has been sent |
-| 400 | A field is missing or invalid |
+| 400 | A field is missing or invalid, or the password appears in a known data breach |
 | 409 | A verified account already uses this email |
+| 503 | The breached-password check could not be reached; try again |
 
 ### `POST /auth/complete-vendor-onboarding`
 
@@ -114,11 +121,11 @@ Public. Step two for vendors. Validates the profile, then sends the verification
 }
 ```
 
-Returns **200** `{ "message", "email" }`. Profile rules are listed under [`PUT /vendor-profiles/:userId`](#put-vendor-profilesuserid). 400 for an invalid profile, 409 if the email is already registered.
+Returns **200** `{ "message", "email" }`. Profile rules are listed under [`PUT /vendor-profiles/:userId`](#put-vendor-profilesuserid). 400 for an invalid profile or a breached password, 409 if the email is already registered, 503 if the breached-password check could not be reached.
 
-### `GET /auth/verify-email?token=…`
+### `POST /auth/verify-email`
 
-Public. This is the link inside the email. It creates the account and answers with a **302 redirect** to the web app: `/verify-email?status=verified` or `?status=invalid`. Not meant to be called from code.
+Public. Body `{ "token" }`. The email's link is `<APP_URL>/verify-email#token=…`: the web app reads the token from the URL fragment and posts it here. Creates the account: **200** `{ "message": "Your email address has been verified." }`, or **400** `{ "error": "This verification link is invalid or expired." }`.
 
 ### `POST /auth/resend-verification`
 
@@ -147,7 +154,7 @@ Public.
 | 400 | Missing or malformed email or password |
 | 401 | Wrong email or password (same message for both) |
 | 403 | Suspended, or email not verified (`code: "EMAIL_NOT_VERIFIED"`) |
-| 429 | Five failed attempts: locked for 15 minutes |
+| 429 | Five failed attempts on the account (locked for 15 minutes), or the per-IP sign-in limit |
 
 ### `POST /auth/logout`
 
@@ -159,7 +166,32 @@ Public. Body `{ "email" }`. Always `200 { "message": "If an account exists for t
 
 ### `POST /auth/reset-password`
 
-Public. Body `{ "token", "password" }`. **200** `{ "message" }` and every session of that account is revoked. **400** for a weak password or an invalid or expired token.
+Public. Body `{ "token", "password" }`. The email's link is `<APP_URL>/reset-password#token=…`; the page takes the token from the URL fragment. **200** `{ "message" }` and every session of that account is revoked. **400** for a weak or breached password, or an invalid or expired token. **503** if the breached-password check could not be reached.
+
+### Google sign-in
+
+Optional: every route below answers as "unavailable" until `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET` and `GOOGLE_OAUTH_REDIRECT_URI` are set. The flow is described in [Authentication](authentication.md#signing-in-with-google).
+
+| Route | Auth | What it does |
+| --- | --- | --- |
+| `GET /auth/google` | Public | **302** to Google's consent screen, or to `/login?oauth=unavailable` when not configured |
+| `GET /auth/google/callback` | Public | Google's redirect target (`GOOGLE_OAUTH_REDIRECT_URI`); not called from code. Ends in a **302** to the web app (see below) |
+| `POST /auth/google/complete` | Public | Body `{ "token" }`, the one-use handoff from the callback. **200** `{ user, token }`, the same as `POST /auth/login`. **400** invalid or expired (60 seconds), **403** account not available |
+| `POST /auth/google/onboarding/details` | Public | Body `{ "token" }`, the onboarding token. **200** `{ "name", "email", "avatarUrl" }` from Google, to pre-fill the form. **400** invalid or expired |
+| `POST /auth/google/onboarding` | Public | Body `{ "token", "name", "organization", "phone", "role" }` (`role`: `vendor` or `reviewer`). Creates the account, already verified. **201** `{ user, token }`. **400** missing fields or expired token, **409** the Google account or the email already has an account |
+| `GET /auth/google/link-status` | Signed in | **200** `{ "linked": true \| false }` |
+| `POST /auth/google/link` | Signed in | Starts connecting Google to the signed-in account. **200** `{ "authorizationUrl" }` to open in the browser. **409** a Google account is already connected, **503** not configured |
+
+Where the callback sends the browser:
+
+| Destination | Meaning |
+| --- | --- |
+| `/login#google_login=…` | Signed in: the page posts the handoff to `POST /auth/google/complete` |
+| `/oauth-onboarding#onboarding=…` | New to the platform: complete the form within 10 minutes |
+| `/login?oauth=link_required` | An account with this email exists but has not connected Google; connect it from Settings first |
+| `/login?oauth=not_registered` | The matching account is not verified or not active |
+| `/login?oauth=denied` · `invalid` · `unavailable` | Google refused, the request was not valid, or Google sign-in is not configured |
+| `/settings?google=linked` · `denied` · `expired` · `conflict` · `unavailable` | Outcome of connecting Google from Settings (`conflict`: that Google account belongs to another user) |
 
 ---
 
@@ -360,11 +392,11 @@ Public. Returns the stored `Document` record, including extracted text.
 
 ### `GET /documents/:id/file`
 
-Public. Streams the original bytes with the right `Content-Type`, inline. Query `token` is optional: **if present** it must be a valid, unexpired token for exactly this document (else **403**); **if absent** the request is served anyway, because the admin review screen has no token to send. **404** when the document has no stored bytes (only the legacy `POST /documents/upload` path produces those).
+Public route, but a signed link is **mandatory**: query `token` must be a valid, unexpired token for exactly this document, else **403** `{"error":"This link has expired or is no longer valid."}`. Tokens are handed out by `GET /tors/:id/documents` (published TORs) and by the admin review record, each after its own access check, and last 15 minutes. Streams the original bytes with the right `Content-Type`, inline. **404** when the document has no stored bytes (only the legacy `POST /documents/upload` path produces those).
 
 ### `POST /documents/upload`
 
-**Admin.** Legacy utility. `multipart/form-data`, field `file` (up to 20 MB) plus optional text fields `projectTitle`, `datePublished`, `deadline`, `agency`, `budget`, `technology`, `projectType`. Runs OCR (Document AI, or the stub) and stores a `Document` that is **not linked to any TOR** and does not appear in search. **201** with the document. To add a TOR by hand, use [`POST /review/tors`](#post-reviewtors).
+**Admin.** Legacy utility. `multipart/form-data`, field `file` (one PDF, up to 20 MB) plus optional text fields `projectTitle`, `datePublished`, `deadline`, `agency`, `budget`, `technology`, `projectType`. The same upload checks as [`POST /review/tors`](#post-reviewtors) apply. Runs OCR (Document AI, or the stub) and stores a `Document` that is **not linked to any TOR** and does not appear in search. **201** with the document. To add a TOR by hand, use [`POST /review/tors`](#post-reviewtors).
 
 ### `POST /documents/:id/summarize`
 
@@ -579,8 +611,7 @@ How often each agency procures, and at what typical size. Takes no `agencyId`.
 
 All **Admin**. Background: the [Admin guide](guides/admin-guide.md) and [extraction pipeline §13](extraction-pipeline.md#136-review-queue-api-controllersreviewcontrollerts-apireview).
 
-> [!WARNING]
-> Every write endpoint here takes `actorId` in the request body and records **that** value in the audit log. The caller must be an admin, but `actorId` is not compared with the signed-in user. Send your own id (it is in the `user.id` returned by login).
+Every write endpoint here records the **signed-in admin** as the actor in the audit log. There is no `actorId` field any more; one sent in a body is ignored.
 
 ### `POST /review/tors`
 
@@ -588,8 +619,7 @@ Create a TOR by hand with its source document, for when an agency's site has cha
 
 | Field | Required | Notes |
 | --- | :---: | --- |
-| `file` | ✅ | The source document, up to 20 MB. (Nothing may publish without one.) |
-| `actorId` | ✅ | Your user id |
+| `file` | ✅ | The source document: one PDF, up to 20 MB. (Nothing may publish without one.) |
 | `agencyId` | ✅ | An existing agency |
 | `title` | ✅ | |
 | `referenceNumber`, `description` | | |
@@ -598,6 +628,8 @@ Create a TOR by hand with its source document, for when an agency's site has cha
 | `submissionDeadline` | | Date |
 
 **201** `{ "tor": { … }, "document": { … } }`. The TOR starts at `discovered` and the file at `uploaded`, so the next AI sweep processes it exactly like a crawled one. It is invisible to vendors until approved. **400** missing/invalid field, **404** unknown agency. There is currently no screen for this; use the API.
+
+Upload checks, in order: the file must be named `.pdf`, sent as `application/pdf` and no larger than 20 MB (**400** "Upload rejected. Provide one PDF file no larger than 20 MB."); its first bytes must be a real PDF signature (**415**); and when malware scanning is on (`UPLOAD_MALWARE_SCAN_MODE=required`, the production default) ClamAV must call it clean (**422** if infected, **503** if the scanner cannot be reached). Nothing is stored or parsed before all of them pass.
 
 ### `GET /review/queue`
 
@@ -620,7 +652,7 @@ TORs awaiting review, oldest first.
 
 ### `GET /review/queue/:id`
 
-The full record for the review editor, **in any status**. `extraction.fieldConfidence` is a plain object, and `documents` lists each source file with a `fileUrl` (relative to the API base) for the side-by-side view.
+The full record for the review editor, **in any status**. `extraction.fieldConfidence` is a plain object, and `documents` lists each source file with a `fileUrl` (relative to the API base, including a 15-minute signed `token`) for the side-by-side view.
 
 ### `PATCH /review/queue/:id/fields`
 
@@ -628,7 +660,6 @@ Correct extracted values. Allowed while the TOR is `pending_review` or `publishe
 
 ```json
 {
-  "actorId": "6730a1…",
   "corrections": { "budget": "1,500,000", "timelineSubmissionDeadline": "2026-12-01", "procurementMethod": "e_bidding" }
 }
 ```
@@ -643,15 +674,15 @@ Returns the updated TOR.
 
 ### `POST /review/queue/:id/approve`
 
-Body `{ "actorId" }`. `pending_review` becomes `published`. **409** from any other state. Audited as `tor.approve`.
+No body. `pending_review` becomes `published`. **409** from any other state. Audited as `tor.approve`.
 
 ### `POST /review/queue/:id/reject`
 
-Body `{ "actorId", "reason" }`. `reason` is required. `pending_review` becomes `rejected` with the reason saved. Audited as `tor.reject`.
+Body `{ "reason" }`. `reason` is required. `pending_review` becomes `rejected` with the reason saved. Audited as `tor.reject`.
 
 ### `POST /review/queue/:id/supersede`
 
-Resolve a confirmed duplicate. Body `{ "actorId", "targetTorId", "reason"? }`. This record becomes `superseded`, points at `targetTorId`, and is marked `duplicateStatus: "confirmed"`. The target stays as the surviving record and must not itself be `rejected`, `superseded` or `archived`. A record cannot supersede itself. Audited as `tor.supersede`. There is no button for this yet; use the API.
+Resolve a confirmed duplicate. Body `{ "targetTorId", "reason"? }`; **400** if either id is malformed. This record becomes `superseded`, points at `targetTorId`, and is marked `duplicateStatus: "confirmed"`. The target stays as the surviving record and must not itself be `rejected`, `superseded` or `archived`. A record cannot supersede itself. Audited as `tor.supersede`. There is no button for this yet; use the API.
 
 ---
 

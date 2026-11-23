@@ -71,12 +71,12 @@ Both only work on records that are still pending; if someone else got there firs
 
 The detector scores every *newly created* TOR against the existing ones (title similarity, same agency, same reference number, budget and date proximity). It **only suggests**; it never merges. When you confirm that record A is a repost of B, mark A as superseded by B.
 
-There is no button for this yet. Use the API with your token and user id (both come back from `POST /auth/login`):
+There is no button for this yet. Use the API with your token (it comes back from `POST /auth/login`); the audit log records you as the actor automatically:
 
 ```bash
 curl -X POST http://localhost:4000/api/review/queue/<A_id>/supersede \
   -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
-  -d '{"actorId":"<your user id>","targetTorId":"<B_id>","reason":"Same announcement reposted"}'
+  -d '{"targetTorId":"<B_id>","reason":"Same announcement reposted"}'
 ```
 
 A becomes `superseded` and points at B, which stays the single published record. B must not be rejected, superseded or archived.
@@ -88,12 +88,12 @@ When an agency's site has changed shape and the crawler cannot read it, you can 
 ```bash
 curl -X POST http://localhost:4000/api/review/tors \
   -H "Authorization: Bearer $TOKEN" \
-  -F "file=@/path/to/tor.pdf" -F "actorId=<your user id>" \
+  -F "file=@/path/to/tor.pdf;type=application/pdf" \
   -F "agencyId=<agency id>" -F "title=ร่างขอบเขตของงาน (TOR) …" \
   -F "submissionDeadline=2026-12-01" -F "budgetAmountThb=1500000"
 ```
 
-Agency ids come from `GET /api/agencies`. The file is required and may be up to 20 MB. The record starts as `discovered` and appears in your queue after the next AI sweep (every 30 minutes when the scheduler is on, or `npm run extract -- --extract-ai`).
+Agency ids come from `GET /api/agencies`. The file is required: one real PDF of up to 20 MB, and where malware scanning is on (the production default) it must also pass a ClamAV scan before anything is stored. [Troubleshooting](../troubleshooting.md#uploading-a-pdf-fails) explains each refusal. The record starts as `discovered` and appears in your queue after the next AI sweep (every 30 minutes when the scheduler is on, or `npm run extract -- --extract-ai`).
 
 ---
 
@@ -172,7 +172,7 @@ A permanent record of what **people** did, newest first, searchable by actor, ac
 It deliberately **does not** record what the AI did. To trace an AI-written value, look at the TOR's `extraction` block (model, prompt version, timestamp) and the extraction jobs (`GET /extraction/ai-jobs`). Between the two, any published value can be traced to its origin, human or machine.
 
 > [!NOTE]
-> The review screens send **your own** user id with every action, so entries are attributed to you. The API itself accepts whatever `actorId` a caller sends, so treat the log as reliable for actions made through the web app.
+> Every entry records the admin who was signed in, taken from the session, so attribution holds whether the action came from the web app or a direct API call. Entries are append-only: the application cannot edit or delete them. For production, also give the API's database user no update or delete rights on the `auditlogs` collection.
 
 ---
 

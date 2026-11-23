@@ -11,6 +11,7 @@ Everything about City of Software that is not obvious from the code. Pick the pa
 | **An administrator** | [Admin guide](guides/admin-guide.md) | [Troubleshooting](troubleshooting.md) |
 | **Deploying it** | [Deployment](deployment.md) | [Configuration](configuration.md) |
 | **Building on the API** | [API reference](api-reference.md) | [Authentication](authentication.md) |
+| **Reviewing security** | [Threat model](threat-model.md) | [Security testing](security-testing.md) |
 | **Changing the code** | [Architecture](architecture.md) | [Development guide](development.md) |
 | **Curious how the AI part works** | [Extraction pipeline](extraction-pipeline.md) | [Notifications and matching](notifications-and-matching.md) |
 | **Checking what is and is not finished** | [Status and limitations](status.md) | [Architecture](architecture.md#where-it-bends-and-where-it-breaks) |
@@ -39,12 +40,21 @@ Everything about City of Software that is not obvious from the code. Pick the pa
 | Document | What it covers |
 | --- | --- |
 | [Architecture](architecture.md) | Components, the life of a TOR, request flow, design decisions and their reasons |
-| [Authentication](authentication.md) | Accounts, roles, sessions, the sign-up and password-reset flows, signed links |
+| [Authentication](authentication.md) | Accounts, roles, sessions, rate limits, Google sign-in, the sign-up and password-reset flows, signed links |
 | [Notifications and matching](notifications-and-matching.md) | How a vendor gets an alert and how "why did this match me" is worked out |
 | [Analytics](analytics.md) | Historical budgets, agency frequency and outlier flags: the method and its limits |
 | [Extraction pipeline](extraction-pipeline.md) | Crawling six sites, OCR and Gemini, confidence-gated review, duplicates, scheduling |
 | [Database design](database-design.md) | Every collection, the reasoning behind the shapes, and the indexes |
 | [API reference](api-reference.md) | Every endpoint with auth, parameters and example responses |
+
+### Security
+
+| Document | What it covers |
+| --- | --- |
+| [Threat model](threat-model.md) | Scope, data classification, data flows, and each threat with its controls |
+| [Security testing](security-testing.md) | CodeQL, the OWASP ZAP baseline, manual authenticated scans, and how each control is tested |
+| [Security logging](security-logging.md) | Every security event the API logs, and what it deliberately leaves out |
+| [Dependency management](dependency-management.md) | Dependabot, the dependency audit, SBOMs and remediation targets |
 
 ### Working on it
 

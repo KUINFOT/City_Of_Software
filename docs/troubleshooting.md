@@ -96,11 +96,33 @@ Dates are stored at midnight UTC and shown as dates, so they should not shift. T
 - **Gmail:** use an **App Password** (needs 2-Step Verification), not the account password.
 - **Resend:** the sending domain must be verified.
 - Check spam. A new link can be requested once a minute.
-- The link points at `PUBLIC_API_URL`, so that address must be reachable from the recipient's browser, not just from the server.
+- The link points at the web app (`APP_URL/verify-email#token=…`), so that address must be reachable from the recipient's browser, not just from the server.
 
 ### The verification link says "invalid or expired"
 
-It lasts 24 hours and works once. It also breaks if the text was cut when copying, or if `AUTH_SECRET` changed since it was sent. Register again.
+It lasts 24 hours and works once. It also breaks if the text was cut when copying (the token is everything after `#token=`), or if `AUTH_SECRET` changed since it was sent. Register again.
+
+### Sign-up or reset says "Choose a password that has not appeared in a known data breach"
+
+That password is on the Have I Been Pwned list of leaked passwords, so it is refused even though it is long enough. Choose another. Only the first five characters of its hash were sent to check it.
+
+### Sign-up or reset says "Password security check is temporarily unavailable"
+
+The API could not reach `api.pwnedpasswords.com`, and it will not accept a password it could not check (503). Allow outbound HTTPS to that host from the server, or try again later.
+
+### "Too many requests. Please try again later."
+
+A per-IP rate limit (429): 10 sign-in attempts per 15 minutes, 20 other sign-up or reset requests per 15 minutes, or 120 writes per minute. Wait for the window to pass. If everyone behind one proxy hits it together, the API is counting the proxy's address: set `TRUST_PROXY_HOPS=1` ([Configuration](configuration.md#security)). The limits are in memory, so restarting the API clears them.
+
+### Google sign-in
+
+| Message or result | Cause and fix |
+| --- | --- |
+| "Google sign-in is not configured on this server" | Set `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET` and `GOOGLE_OAUTH_REDIRECT_URI`, then restart the API |
+| Google shows `redirect_uri_mismatch` | `GOOGLE_OAUTH_REDIRECT_URI` must match, character for character, a redirect URI registered on the OAuth client in Google |
+| "This email already has an account" (`oauth=link_required`) | By design. Sign in with the password, then connect Google under *Settings → Personal information* |
+| The Google account is connected to someone else (`google=conflict`) | One Google account can belong to one platform account only |
+| The onboarding form says the request expired | It must be completed within 10 minutes of returning from Google. Start again |
 
 ### "An account with this email already exists"
 
@@ -158,7 +180,20 @@ Expected for `bma_egp2`. Its terms ban crawling by name. Do not override it with
 
 ### A crawl reports a TLS or certificate problem
 
-Several `.go.th` hosts serve incomplete certificate chains. The crawler retries once with verification disabled **for that request only** and flags the result `insecureTransport`. This is expected for public documents behind no login. Nothing else is relaxed.
+Some `.go.th` hosts serve incomplete certificate chains. The crawler no longer works around this (it used to retry without verification until 22 November 2026), so the request fails and the error is on the job record. There is no switch to relax it. If a source matters, ask the agency to fix its certificate, or add its documents by hand with `POST /api/review/tors`.
+
+### A document link says "This link has expired or is no longer valid"
+
+Document links are signed and last 15 minutes. Reload the TOR page (or the review screen) for a fresh one. A link copied without its `?token=…` never works.
+
+### Uploading a PDF fails
+
+| Answer | Meaning |
+| --- | --- |
+| 400 "Upload rejected. Provide one PDF file no larger than 20 MB." | Wrong file name or type, or over 20 MB |
+| 415 "Only valid PDF files are accepted." | The file is named `.pdf` but is not really a PDF |
+| 422 "The uploaded file did not pass the security scan." | ClamAV found malware. Do not retry with the same file |
+| 503 "File security scanning is temporarily unavailable." | Scanning is required but ClamAV cannot be reached: check the `clamav` container (`docker compose ps`), or for local work without ClamAV set `UPLOAD_MALWARE_SCAN_MODE=disabled` in `back-end/.env` |
 
 ### The crawl finds nothing, but the site has content
 
@@ -223,7 +258,11 @@ Your Docker Compose is older than v2.24. Upgrade Docker.
 
 ### The back-end container is `unhealthy` or restarting
 
-The health check does not touch the database, so unhealthy usually means the process crashed on start. Read `docker compose logs back-end`. The usual culprit is a missing `AUTH_SECRET` in production, or an invalid cron expression.
+The health check does not touch the database, so unhealthy usually means the process crashed on start. Read `docker compose logs back-end`. The usual culprit is a missing `AUTH_SECRET` in production, an invalid cron expression, or an out-of-range security setting (`TRUST_PROXY_HOPS`, `UPLOAD_MALWARE_*`).
+
+### The back-end never starts: it is waiting for `clamav`
+
+The back-end starts only once ClamAV is healthy, and on its first start ClamAV downloads its virus definitions, which can take a few minutes (its health check allows two). If it stays unhealthy, read `docker compose logs clamav`: it needs outbound internet access for the definitions, and enough free memory to load them.
 
 ### The front-end is healthy but cannot reach the API
 

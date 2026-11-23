@@ -39,10 +39,34 @@ In Docker, any back-end setting that is not named in `docker-compose.yml` (for e
 | `PORT` | `4000` | Port the API listens on |
 | `NODE_ENV` | `development` | `production` makes `AUTH_SECRET` mandatory and makes sending email with no provider an error |
 | `CORS_ORIGIN` | `http://localhost:3000` | Origins allowed to call the API from a browser. Comma-separated for several. Must contain the web app's origin exactly (scheme, host, port) |
-| `APP_URL` | `http://localhost:3000` | The web app's public address. Used in password-reset links, in links back to TORs inside alert emails, and for the redirect after email verification |
-| `PUBLIC_API_URL` | `http://localhost:4000/api` | The API's public address **including `/api`**. Used to build the verification and unsubscribe links in emails |
+| `APP_URL` | `http://localhost:3000` | The web app's public address. Used in the verification and password-reset links, in links back to TORs inside alert emails, and for the redirects at the end of Google sign-in |
+| `PUBLIC_API_URL` | `http://localhost:4000/api` | The API's public address **including `/api`**. Used to build the unsubscribe links in alert emails |
 
 Use HTTPS URLs on a real deployment: the links in emails are built from `APP_URL` and `PUBLIC_API_URL`.
+
+## Security
+
+| Variable | Default | What it does |
+| --- | --- | --- |
+| `TRUST_PROXY_HOPS` | `0` | How many reverse proxies in front of the API to trust for the visitor's address (`0` to `2`). Keep `0` when the API is reached directly. Set `1` only when exactly one proxy you control sits in front **and** the API port is not reachable from the internet, or a visitor could fake their address and dodge the [rate limits](authentication.md#rate-limits) |
+| `UPLOAD_MALWARE_SCAN_MODE` | `disabled` in development, `required` when `NODE_ENV=production` | `required` sends every uploaded PDF to ClamAV and refuses it unless the answer is clean; if the scanner cannot be reached the upload is refused (503). `disabled` skips the scan, for local work without ClamAV |
+| `UPLOAD_MALWARE_SCANNER_HOST` | `127.0.0.1` | Where the ClamAV daemon (`clamd`) listens |
+| `UPLOAD_MALWARE_SCANNER_PORT` | `3310` | Its TCP port (1–65535) |
+| `UPLOAD_MALWARE_SCAN_TIMEOUT_MS` | `10000` | How long one scan may take, 1,000 to 60,000 ms |
+
+A value outside its allowed range stops the API at start-up rather than being ignored. Docker Compose runs a private `clamav` service and sets `UPLOAD_MALWARE_SCAN_MODE=required` and `UPLOAD_MALWARE_SCANNER_HOST=clamav` for you.
+
+The breached-password check needs no setting, but it does need **outbound HTTPS** from the API to `api.pwnedpasswords.com`: without it, sign-up and password reset answer 503.
+
+## Google sign-in (optional)
+
+Google sign-in is on only when all three are set. Create a *Web application* OAuth client in Google Auth Platform and register the redirect URI there exactly as below.
+
+| Variable | Default | What it does |
+| --- | --- | --- |
+| `GOOGLE_OAUTH_CLIENT_ID` | empty | The OAuth client id |
+| `GOOGLE_OAUTH_CLIENT_SECRET` | empty | The client secret. Keep it in the git-ignored `.env` or a secret manager, never in Git |
+| `GOOGLE_OAUTH_REDIRECT_URI` | `http://localhost:4000/api/auth/google/callback` | Where Google sends the user back: the API's `/auth/google/callback`. On a server, `https://<your host>/api/auth/google/callback` |
 
 ## Email
 
@@ -186,8 +210,12 @@ AUTH_SECRET=…                       # openssl rand -base64 48
 CORS_ORIGIN=https://portal.example.org
 APP_URL=https://portal.example.org
 PUBLIC_API_URL=https://portal.example.org/api
+TRUST_PROXY_HOPS=1                  # one reverse proxy in front, API port not public
 RESEND_API_KEY=…
 EMAIL_FROM=alerts@example.org
 GCP_PROJECT_ID=…
+GOOGLE_OAUTH_CLIENT_ID=…            # optional: Google sign-in
+GOOGLE_OAUTH_CLIENT_SECRET=…
+GOOGLE_OAUTH_REDIRECT_URI=https://portal.example.org/api/auth/google/callback
 SCHEDULER_ENABLED=true              # on this server only, and run exactly one back-end
 ```

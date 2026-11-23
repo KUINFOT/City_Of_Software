@@ -23,7 +23,7 @@ cd back-end  && npm run typecheck && npm test
 cd front-end && npm run typecheck && npm run build
 ```
 
-That is exactly what CI runs, so a green local run means a green pull request.
+CI runs the same commands, but a green local run is the stronger check: on CI's Node 20 the back-end `npm test` finds no test files and passes without running anything (see [CI](#ci)). Run the tests locally on Node 22 or newer.
 
 ### Handy commands
 
@@ -158,9 +158,22 @@ The history follows these conventions; please keep them.
 | --- | --- |
 | `backend` | Node 20, `npm ci`, `npm run typecheck`, `npm test` (with a dummy `MONGODB_URI`) |
 | `frontend` | Node 20, `npm ci`, `npm run typecheck`, `npm run build` |
-| `docker` | `docker compose config --quiet`, then builds both images and waits for them to report healthy (with dummy `MONGODB_URI` and `AUTH_SECRET`) |
+| `docker` | `docker compose config --quiet`, then builds the images and waits for every service, ClamAV included, to report healthy (with dummy `MONGODB_URI` and `AUTH_SECRET`) |
+
+> [!WARNING]
+> The `backend` job's `npm test` currently runs **no tests**. `node --test` on Node 20 looks only for `.js` test files, so it finds none of the `*.test.ts` files and reports success. Until the workflow is fixed (pass the files explicitly, for example `node --import tsx --test "src/**/*.test.ts"`, and move CI to Node 22), run `npm test` locally before you push.
 
 The unit tests never touch a real MongoDB or Google Cloud, so CI needs no secrets. **Do not add any.**
+
+Three security workflows run alongside CI:
+
+| Workflow | When | Does |
+| --- | --- | --- |
+| `codeql.yml` | Pushes to `main` (and `codex/**` branches), pull requests into `main`, and weekly | CodeQL static analysis of the JavaScript and TypeScript |
+| `zap-baseline.yml` | Pushes to `main` (and `codex/**` branches), pull requests into `main`, or by hand | Starts the stack and runs an OWASP ZAP passive baseline scan against the API's health endpoint; the report is kept as an artifact for 30 days |
+| `dependency-security.yml` | Pushes and pull requests that change a `package.json` or lockfile, weekly, or by hand | `npm audit --omit=dev --audit-level=high` for both packages, plus an SBOM for each |
+
+Dependabot also opens weekly update pull requests for the npm dependencies. What each check covers, and how to run an authenticated scan by hand, is in [Security testing](security-testing.md) and [Dependency management](dependency-management.md).
 
 ## Which doc to update
 

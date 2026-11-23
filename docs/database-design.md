@@ -8,7 +8,7 @@ The shape of the MongoDB database, and the reasons behind it. Start with the pic
 
 ## At a glance
 
-16 collections, in five groups.
+19 collections, in five groups.
 
 | Group | Model → collection | Holds | Grows with |
 | --- | --- | --- | --- |
@@ -28,6 +28,9 @@ The shape of the MongoDB database, and the reasons behind it. Start with the pic
 | | `EmailVerification` → `emailverifications` | Hashed verification tokens (legacy path) | Rare (TTL) |
 | | `PasswordReset` → `passwordresets` | Hashed reset tokens | Resets (TTL) |
 | | `VendorOnboarding` → `vendoronboardings` | *Legacy*, from an older sign-up flow | n/a |
+| | `OAuthAccountLink` → `oauthaccountlinks` | One-use requests to connect Google to a signed-in account | Connect attempts (TTL) |
+| | `OAuthLogin` → `oauthlogins` | One-use handoffs from a Google sign-in to a session | Google sign-ins (TTL) |
+| | `OAuthOnboarding` → `oauthonboardings` | Google-verified details waiting for a new user's sign-up form | Google sign-ups (TTL) |
 
 ## Design principles
 
@@ -248,7 +251,7 @@ Raw files (PDF or scanned image) and their extracted text, kept apart from `tors
     storageKey: String,                // key in the blob store: <sourceId>/<sha[0:2]>/<sha256><ext>
     sha256: String,                    // content hash: dedupes identical bytes across sources and runs
     downloadedAt: Date,
-    insecureTransport: Boolean         // true when the download needed TLS verification off
+    insecureTransport: Boolean         // true when the download needed TLS verification off (only before 22 Nov 2026; new downloads always verify)
   },
 
   extraction: {                        // retry bookkeeping
@@ -331,7 +334,9 @@ Index: `{ agencyId, projectType, year }` unique. The historical-budget and frequ
 ```jsonc
 {
   email: String,                       // unique, stored lower-case
-  passwordHash: String,                // scrypt$<salt>$<key>
+  passwordHash: String,                // scrypt$<salt>$<key>; for an account created with Google, a hash of a random secret nobody knows
+  googleSubject: String,               // Google's permanent account id, once Google is connected; unique (sparse)
+  avatarUrl: String,                   // from Google, if any
   role: "vendor" | "reviewer" | "admin" | "public",   // default "vendor". "public" is listed but rejected by the guards
   name: String, organization: String, phone: String,
   emailVerified: Boolean,
@@ -343,7 +348,7 @@ Index: `{ agencyId, projectType, year }` unique. The historical-budget and frequ
 }
 ```
 
-Index: `{ email }` unique (from the schema), `{ role }`. Role-specific data lives in `vendorprofiles`.
+Indexes: `{ email }` unique (from the schema), `{ googleSubject }` unique and sparse, `{ role }`. Role-specific data lives in `vendorprofiles`. Accounts are matched to Google by `googleSubject` only, never by email.
 
 ### `vendorprofiles`: a vendor's declared capability
 
@@ -394,8 +399,11 @@ All carry TTL indexes (`expiresAt` with `expireAfterSeconds: 0`), so MongoDB del
 | `emailverifications` | Hashed verification tokens for an *existing, unverified* user (legacy path) | `userId`, `tokenHash` (unique), `sentAt`, `expiresAt`, `usedAt` |
 | `passwordresets` | Hashed reset tokens | `userId`, `tokenHash` (unique), `sentAt`, `expiresAt` (1 h), `usedAt` |
 | `vendoronboardings` | **Legacy**; only referenced to clean up records from an older sign-up flow | `userId`, `tokenHash`, `expiresAt`, `usedAt` |
+| `oauthaccountlinks` | A request to connect Google, tied to the session that started it | `stateHash` (unique), `userId`, `sessionId`, `sessionVersion`, `expiresAt` (10 min), `usedAt` |
+| `oauthlogins` | The one-use handoff after a Google sign-in | `tokenHash` (unique), `userId`, `expiresAt` (60 s), `usedAt` |
+| `oauthonboardings` | Google's verified details for someone new, until they finish the sign-up form | `tokenHash` (unique), `googleSubject`, `email`, `name`, `avatarUrl`, `expiresAt` (10 min), `usedAt` |
 
-Only the SHA-256 **hash** of a token is stored. New registrations create no document at all until the email link is opened.
+Only a **hash** of a token is stored: SHA-256 for the email and session tokens, an HMAC keyed by `AUTH_SECRET` for the Google flows. No Google access or ID token is ever stored. New registrations create no document at all until the email link is opened.
 
 ### `bookmarks`: saved TORs
 
@@ -448,7 +456,9 @@ Indexes:
 }
 ```
 
-Indexes: `{ entityType, entityId, createdAt: -1 }`, `{ actorId, createdAt: -1 }`. It records only what **people** did; the origin of an AI-written value is traced through `tors.extraction` and `extractionjobs`.
+Indexes: `{ entityType, entityId, createdAt: -1 }`, `{ actorId, createdAt: -1 }`. It records only what **people** did; the origin of an AI-written value is traced through `tors.extraction` and `extractionjobs`. `actorId` is always the signed-in admin, taken from the session.
+
+**Append-only.** The model refuses to change or remove an entry: saving an existing document, and every update, replace or delete query, throws. That guards the application, not the database, so in production also give the API's database user no update or delete rights on this collection.
 
 ---
 
@@ -472,7 +482,7 @@ Indexes: `{ entityType, entityId, createdAt: -1 }`, `{ actorId, createdAt: -1 }`
 
 | Piece | State |
 | --- | --- |
-| All 16 Mongoose models and their indexes | Built (indexes are created at start-up by Mongoose) |
+| All 19 Mongoose models and their indexes | Built (indexes are created at start-up by Mongoose) |
 | Review queue, field correction, approve, reject, supersede, manual TOR creation | Built; admin-only |
 | Audit log (read and write) | Built |
 | Accounts, sessions, password reset, role management | Built |

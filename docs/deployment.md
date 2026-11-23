@@ -4,14 +4,15 @@ Run the whole stack on a server with Docker. This page covers configuring it, st
 
 ## What you are deploying
 
-`docker-compose.yml` runs two services:
+`docker-compose.yml` runs three services:
 
 | Service | Image | Port | Notes |
 | --- | --- | --- | --- |
 | `back-end` | Built from `back-end/Dockerfile` | 4000 | The API, the crawler, the AI sweep and the scheduler, in one process |
 | `front-end` | Built from `front-end/Dockerfile` | 3000 | The Next.js web app |
+| `clamav` | `clamav/clamav:stable` | none (private) | Scans every uploaded PDF. Reachable only by the back-end, which waits for it to be healthy before starting |
 
-Each has a multi-stage `Dockerfile` that builds on **Node 22** and runs as the non-root `node` user. The containers also drop all Linux capabilities and set `no-new-privileges`. Both have health checks.
+The two app images are multi-stage `Dockerfile`s that build on **Node 22** and run as the non-root `node` user. The containers set `no-new-privileges`, and the app containers also drop all Linux capabilities. All three have health checks.
 
 **MongoDB is not part of the stack.** The API connects to MongoDB Atlas through `MONGODB_URI`, so the Atlas **network access list must allow the server's IP address**.
 
@@ -26,7 +27,10 @@ flowchart LR
     B --> V[("tor-storage volume<br/>/data/storage")]
     B -.->|"read-only"| S["secrets/service-account.json"]
     B --> G["Google Cloud"]
+    B --> C["clamav :3310<br/>(private)"]
 ```
+
+The back-end also needs **outbound HTTPS** to the agency websites, Google Cloud, Google sign-in (if used), your email provider and `api.pwnedpasswords.com`, which checks new passwords against known breaches. If that last one is blocked, sign-up and password reset fail with 503.
 
 ---
 
@@ -46,6 +50,10 @@ Fill in `.env`. It is git-ignored, and the `.dockerignore` files keep it, `servi
 | `GMAIL_USER` and `GMAIL_APP_PASSWORD`, or `RESEND_API_KEY` and `EMAIL_FROM` | Email delivery. Sign-up and password reset need one of them in production. |
 | `GCP_PROJECT_ID`, `GCP_LOCATION`, `DOC_AI_PROCESSOR_ID`, `VERTEX_AI_*` | Google Cloud. Optional: with `GCP_PROJECT_ID` empty, every AI call uses the built-in stub and sends the record to manual review. |
 | `SCHEDULER_ENABLED` | `false` unless you set it to `true`. See [the scheduler](#the-scheduler). |
+| `TRUST_PROXY_HOPS` | `0` by default. Set `1` once your reverse proxy is in front and the API port is closed to the internet, so rate limits see visitors' real addresses ([configuration](configuration.md#security)). |
+| `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, `GOOGLE_OAUTH_REDIRECT_URI` | Optional Google sign-in. The redirect URI is `https://<your host>/api/auth/google/callback` and must also be registered in Google. |
+
+Malware scanning needs no setting here: Compose turns it on (`UPLOAD_MALWARE_SCAN_MODE=required`) and points it at the `clamav` service.
 
 Put the Google Cloud service account key at `secrets/service-account.json` (git-ignored). It is mounted read-only into the back-end and **must be readable by user ID 1000**.
 
@@ -61,7 +69,7 @@ docker compose up --build -d
 docker compose ps
 ```
 
-Both services report `healthy` within about a minute. The web app is at <http://localhost:3000> and the API's health check at <http://localhost:4000/api/health> (change the ports with `FRONTEND_PORT` and `BACKEND_PORT`; if you change `BACKEND_PORT`, change `PUBLIC_API_URL` to match).
+All three services report `healthy` within a few minutes; on the first start `clamav` downloads its virus definitions, and the back-end waits for it. The web app is at <http://localhost:3000> and the API's health check at <http://localhost:4000/api/health> (change the ports with `FRONTEND_PORT` and `BACKEND_PORT`; if you change `BACKEND_PORT`, change `PUBLIC_API_URL` to match).
 
 If either service does not become healthy, read the log:
 
@@ -98,7 +106,7 @@ To roll back, check out the previous commit or tag and run the same command. The
 - **The extraction CLI** runs inside the deployed container, for example `docker compose exec back-end node dist/extraction/cli.js --list`.
 - Put a TLS-terminating reverse proxy in front of the app before public release ([an example](#a-reverse-proxy-example)). It must redirect browser HTTP traffic to HTTPS, keep the API port inaccessible from the public internet, and set `TRUST_PROXY_HOPS=1` on the API only when it is the one trusted proxy immediately upstream. Keep the value at `0` for local or direct access. The API already sends HSTS, CSP and related headers, but a TLS certificate and reverse-proxy network isolation are deployment requirements.
 
-CI builds both images on every pull request and checks that the stack starts and reports healthy.
+CI builds both app images on every push to `main` and every pull request into it, and checks that the stack, ClamAV included, starts and reports healthy.
 
 ---
 
@@ -181,8 +189,9 @@ Things the proxy must allow:
 - [ ] `EXTRACTION_AUTO_PUBLISH_ENABLED` is still `false`
 - [ ] Backups of the database and the `tor-storage` volume are scheduled
 - [ ] The reverse proxy permits 20 MB bodies and long requests
-- [ ] You have run `docker compose ps` and both services are `healthy`
+- [ ] The API port is reachable only through the proxy, and `TRUST_PROXY_HOPS=1`
+- [ ] You have run `docker compose ps` and all three services are `healthy`
 
 ## Hardening you already get
 
-Containers run as a non-root user, with all capabilities dropped and `no-new-privileges`. The application code in the back-end image is owned by root so the API cannot rewrite itself; only the storage directory is writable. Secrets are mounted or passed at run time and excluded from images by `.dockerignore`. Passwords are scrypt-hashed and sessions can be revoked server-side. What is **not** covered, such as general rate limiting and TLS, is listed in [Authentication](authentication.md#what-this-does-not-do-yet).
+Containers run as a non-root user, with all capabilities dropped and `no-new-privileges`. The application code in the back-end image is owned by root so the API cannot rewrite itself; only the storage directory is writable. Secrets are mounted or passed at run time and excluded from images by `.dockerignore`. Passwords are scrypt-hashed and checked against known breaches, and sessions can be revoked server-side. The API adds security headers (HSTS, a deny-all CSP, `no-referrer`), `Cache-Control: no-store`, per-IP rate limits, request ids and JSON security events ([security logging](security-logging.md)), and every uploaded PDF must pass a signature check and a ClamAV scan. What is **not** covered, TLS above all, is listed in [Authentication](authentication.md#what-this-does-not-do-yet); the [threat model](threat-model.md) has the full picture.

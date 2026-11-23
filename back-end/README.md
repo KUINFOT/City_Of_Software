@@ -23,7 +23,7 @@ For the big picture read [docs/architecture.md](../docs/architecture.md). This f
 
 ## Prerequisites
 
-- **Node.js 22 or newer.** The Docker image uses 22, and `@google-cloud/documentai` requires it. (`package.json` still says `>=18`, and CI also runs on 20, but 22 is what is tested in production.)
+- **Node.js 22 or newer.** The Docker image uses 22, and `@google-cloud/documentai` requires it. (`package.json` still says `>=18`, and CI runs on 20, where `npm test` finds no test files: run the tests locally.)
 - **A MongoDB connection string.** A free MongoDB Atlas cluster is enough. If you use Atlas, add your IP address to the cluster's network access list.
 
 ## Set up
@@ -82,12 +82,12 @@ HTTP/1.1 401 Unauthorized
 
 ## The API at a glance
 
-Everything is under `/api`. Responses are JSON; errors look like `{ "error": "message" }`. Protected routes expect `Authorization: Bearer <token>` from `POST /api/auth/login`.
+Everything is under `/api`. Responses are JSON; errors look like `{ "error": "message" }`. Protected routes expect `Authorization: Bearer <token>` from `POST /api/auth/login`. Every response carries security headers and an `X-Request-ID`, and per-IP rate limits apply to sign-in and to all writes.
 
 | Area | Prefix | Who can call it |
 | --- | --- | --- |
 | Health | `GET /health` | Anyone |
-| Accounts and sign-in | `/auth/*` | Anyone |
+| Accounts and sign-in, including optional Google sign-in | `/auth/*` | Anyone (connecting Google: signed in) |
 | Published TORs, detail, source documents | `/tors`, `/tors/:id`, `/tors/:id/documents` | Anyone |
 | Search with filters | `GET /documents` | Anyone |
 | Agencies (for the "follow" picker) | `GET /agencies` | Anyone |
@@ -112,8 +112,8 @@ src/
 ├── config/                  env.ts (validated env) · db.ts · gcpConfig.ts
 ├── routes/                  one router per feature, mounted in routes/index.ts
 ├── controllers/             request handlers
-├── middleware/              auth.middleware.ts · upload.ts (multer, 20 MB) · errorHandler.ts
-├── models/                  16 Mongoose models (see docs/database-design.md)
+├── middleware/              auth.middleware.ts · security.middleware.ts (headers, rate limits) · securityLog.ts · upload.ts (PDF only, 20 MB, ClamAV scan) · errorHandler.ts
+├── models/                  19 Mongoose models (see docs/database-design.md)
 ├── services/                session, password, email, Document AI, Gemini, signed-link tokens
 ├── extraction/
 │   ├── registry.ts          the six sources, with compliance posture
@@ -133,7 +133,7 @@ Tests sit beside the code they cover (`foo.ts` and `foo.test.ts`).
 
 ## Authentication in one paragraph
 
-Sign-in returns a signed Bearer token. Each request is checked against a server-side `Session` (30-minute idle window, 8-hour maximum) and the user's current status and role, so logout, suspension and role changes take effect immediately. Three roles exist: `vendor`, `reviewer` and `admin`. Passwords are hashed with scrypt, five failed sign-ins lock an account for 15 minutes, and sign-up stores nothing until the email link is opened. The full story, including the first-admin step, is in [docs/authentication.md](../docs/authentication.md).
+Sign-in returns a signed Bearer token. Each request is checked against a server-side `Session` (30-minute idle window, 8-hour maximum) and the user's current status and role, so logout, suspension and role changes take effect immediately. Three roles exist: `vendor`, `reviewer` and `admin`. Passwords are hashed with scrypt and checked against known breaches, five failed sign-ins lock an account for 15 minutes, per-IP rate limits sit on top, and sign-up stores nothing until the email link is opened. Google sign-in is optional (the three `GOOGLE_OAUTH_*` settings). The full story, including the first-admin step, is in [docs/authentication.md](../docs/authentication.md).
 
 ## The extraction CLI
 
@@ -204,7 +204,9 @@ Notes that save an afternoon:
 npm test
 ```
 
-About 200 tests run in a few seconds. They cover the pure logic (classifier, dates, robots.txt, grounding, routing, duplicates, outliers, analytics, matching) and the security-sensitive services (tokens, passwords, sessions). None of them open a database or call Google.
+225 tests run in a few seconds. They cover the pure logic (classifier, dates, robots.txt, grounding, routing, duplicates, outliers, analytics, matching) and the security-sensitive code (tokens, passwords and the breach check, sessions, Google OAuth state, outbound URL safety, malware scanning, id validation, the append-only audit log). None of them open a database or call Google.
+
+Run them on Node 22 or newer. CI's `backend` job runs `npm test` on Node 20, which finds no `.ts` test files and passes without running any ([details](../docs/development.md#ci)).
 
 `MONGODB_URI` must be *set* (to anything) because some modules import `config/env.ts`, which refuses to load without it. CI sets a dummy value; so can you:
 

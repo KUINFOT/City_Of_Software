@@ -2,7 +2,7 @@
 
 What works, what needs configuration, what is missing, and what is known to be wrong. Written to be believed: where something only works under conditions, the conditions are stated.
 
-> **How this was checked (3 November 2026).** By reading the code path for each user story, running the type checks (clean) and the back-end unit tests (205 passing), and running the search-sort code against sample data. It is **not** an end-to-end acceptance test against a live deployment. If something here disagrees with what you see, trust what you see and fix this page.
+> **How this was checked (3 November 2026; sign-in, security and operations rows updated 23 November 2026).** By reading the code path for each user story, running the type checks (clean) and the back-end unit tests (205 passing then, 225 on 23 November), and running the search-sort code against sample data. It is **not** an end-to-end acceptance test against a live deployment. If something here disagrees with what you see, trust what you see and fix this page.
 
 ## Legend
 
@@ -25,11 +25,11 @@ The stories come from the SRS; `US-nnn` is GitHub issue `nnn + 9`. Grouped by th
 
 | Story | | Notes |
 | --- | :---: | --- |
-| US-001 Register with email and password | ⚙️ | Needs an email provider to *send* the link; without one the link is printed in the API terminal (development only) |
+| US-001 Register with email and password | ⚙️ | Needs an email provider to *send* the link; without one the link is printed in the API terminal (development only). Signing up with Google instead needs Google OAuth credentials and no email |
 | US-002 Confirm my email | ⚙️ | As above |
 | US-003 Declare my capability profile | ✅ | Three-step sign-up |
 | US-004 Change my profile any time | ✅ | Versioned, with conflict detection |
-| US-005 Log in, log out, recover a password | ⚙️ | Reset emails need a provider |
+| US-005 Log in, log out, recover a password | ⚙️ | Reset emails need a provider. Google sign-in is optional and needs Google OAuth credentials |
 | US-006 See how complete my profile is | ✅ | Weighted score and a list of what is missing |
 
 ### Discovering TORs (US-007 to US-014)
@@ -104,7 +104,7 @@ The stories come from the SRS; `US-nnn` is GitHub issue `nnn + 9`. Grouped by th
 | US-042 A queue of TORs awaiting approval | ✅ | |
 | US-043 Correct fields with the original beside me | ✅ | The original opens in a new tab beside the editor |
 | US-044 Health of each agency adapter | ✅ | |
-| US-045 An audit trail of every change | ✅ | See [the `actorId` note](#security-and-access) |
+| US-045 An audit trail of every change | ✅ | Append-only; each entry records the signed-in admin as the actor |
 | US-046 Manage accounts and roles | ✅ | |
 | US-047 Export the repository | ⚠️ | The screen is a **demo** that downloads three sample rows. A real export or backup is not built |
 
@@ -135,19 +135,22 @@ Behaviour that is intentional or incomplete, rather than broken.
 7. **No lawful BMA source.** The SRS scope names five agencies (MOL, DGA, MOC, BMA, ITD). The registry runs MOL, DGA, MOC, ITD **and DEPA**, and the only BMA entry (eGP BMA2) is blocked by its Terms of Service. A compliant BMA adapter does not exist yet. This was a conscious decision, not an oversight.
 8. **Search is basic.** Regular-expression substring match; no stemming, typo tolerance or relevance model. "Highest Match %" counts matching search words.
 9. **Placeholders in the UI.** `/ai-recommendations` ("Coming Soon"), the API-key section in Settings, the three alert toggles and the *saved searches* list in Settings (page-local only), and the landing page's headline numbers (static text).
-10. **No account self-service beyond profile and password.** No email change, no account deletion, no 2FA, no "sign out everywhere" button.
+10. **No account self-service beyond profile, password and connecting Google.** No email change, no account deletion, no 2FA, no "sign out everywhere" button.
 11. **Only the Thai UI exists**, apart from the English Advanced search page.
 
 ## Security and access
 
 | Item | Detail |
 | --- | --- |
-| **Two document endpoints are public** | `GET /api/documents/:id` returns the full stored record (including extracted text), and `GET /api/documents/:id/file` serves the bytes and only checks a token if one is sent. Anyone who knows a document id can read them, including documents of unpublished TORs |
-| **`actorId` is client-supplied** | Review endpoints record the `actorId` from the request body. The web app sends the signed-in admin's own id, so its entries are accurate, but a direct API call could name anyone. Fix: read `req.authUser.id` instead |
+| **A document's stored record is public** | `GET /api/documents/:id` needs no sign-in and returns the full stored record (including extracted text), even for a TOR that is not published. The file itself is protected: `GET /api/documents/:id/file` refuses any request without a valid signed link |
 | **Token in `localStorage`** | Standard trade-off; it would be exposed to any cross-site-scripting bug |
-| **No general rate limiting** | Only the sign-in lockout and email cooldowns exist |
+| **Rate limits live in memory** | Per-IP limits cover sign-in (10 per 15 minutes), other account actions (20 per 15 minutes) and all writes (120 per minute), but each API process counts on its own and a restart resets them |
+| **The breached-password check needs the internet** | Sign-up and password reset ask the Have I Been Pwned range API; when it cannot be reached they answer 503 rather than accept an unchecked password |
+| **Upload scanning is off outside production** | `UPLOAD_MALWARE_SCAN_MODE` defaults to `disabled` in development and `required` in production, where an upload is refused (503) while ClamAV is unreachable. Docker Compose starts ClamAV and sets `required` |
 | **Public by design** | `GET /tors`, `GET /tors/:id`, `GET /tors/:id/documents`, `GET /documents`, `GET /agencies`. They return published records only |
 | **Development secret** | Without `AUTH_SECRET`, development uses a built-in value. Production refuses to start without one |
+
+Fixed on 22 and 23 November 2026: review actions record the signed-in admin as the actor (no `actorId` in request bodies any more), the document file endpoint requires a signed link, malformed ids answer 404, and the API sends security headers and request ids. The [threat model](threat-model.md) maps each threat to its controls.
 
 ## Operations
 
@@ -161,6 +164,8 @@ Behaviour that is intentional or incomplete, rather than broken.
 | **Model availability** | Only `gemini-2.5-flash` was confirmed reachable; lighter models returned "not found" on the project at last test (2026-09-14) |
 | **Thresholds are unvalidated** | The duplicate threshold (0.65), outlier margin (1.5) and minimum comparable-set size (5) are sane defaults without a labelled data set to tune them against |
 | **No integration or front-end tests** | Unit tests only; CI does not exercise the database or the UI |
+| **CI runs none of the back-end tests** | The CI workflow uses Node 20, whose `node --test` does not pick up `.ts` test files, so the back-end test step finds 0 tests and still passes. They run locally (225 passing on 23 November). Fix: pass the files explicitly (for example `"src/**/*.test.ts"`) and move CI to Node 22, which the project needs anyway |
+| **The Ministry of Commerce source is failing** | Its listing page returns HTTP 404 (seen 23 November 2026), so the MOC adapter collects nothing and shows as an error on the health screen until its URL is updated |
 
 ## Housekeeping
 
@@ -182,10 +187,11 @@ Dead or leftover code, listed so nobody builds on it by mistake:
 Not commitments, only the gaps the code itself points at, roughly by value:
 
 1. Fix the three search bugs (small, contained, high visibility).
-2. Decide the alert trigger: also alert when a matching TOR is *published*, which is what vendors will expect.
-3. Close the two public document endpoints and read `actorId` from the session.
-4. Screens for duplicate resolution and manual upload.
-5. A job queue behind crawl-on-request, and a database-backed scheduler lock so more than one instance is safe.
-6. A compliant BMA source.
-7. Object storage for PDFs.
-8. Atlas Search (or similar) for Thai-aware, ranked search.
+2. Make CI actually run the back-end tests, and point the MOC adapter at the ministry's new listing page.
+3. Decide the alert trigger: also alert when a matching TOR is *published*, which is what vendors will expect.
+4. Stop serving the full stored document record publicly (`GET /documents/:id`).
+5. Screens for duplicate resolution and manual upload.
+6. A job queue behind crawl-on-request, plus a database-backed scheduler lock and a shared rate-limit store, so more than one instance is safe.
+7. A compliant BMA source.
+8. Object storage for PDFs.
+9. Atlas Search (or similar) for Thai-aware, ranked search.

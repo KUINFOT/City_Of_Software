@@ -80,7 +80,7 @@ flowchart TB
     end
 
     subgraph CORE["core/ — shared infrastructure"]
-        H["httpClient<br/>rate limit · robots · TLS fallback"]
+        H["httpClient<br/>rate limit · robots · URL safety"]
         RB["robots<br/>zero-directive fix"]
         TD["thaiDate<br/>BE→CE · 3 formats"]
         AS["awardStatus<br/>keyword classifier"]
@@ -121,7 +121,8 @@ Adding a seventh source is one adapter file plus one registry entry. Nothing els
 |---|---|
 | `types.ts` | `RawListing`, `SourceAdapter`, `SourceDescriptor`, `RunResult` — the contracts |
 | `registry.ts` | The six sources: compliance posture, caveats, defaults |
-| `core/httpClient.ts` | Polite HTTP: honest UA, per-host rate limit, retries, charset decode, TLS fallback |
+| `core/httpClient.ts` | Polite HTTP: honest UA, per-host rate limit, retries, charset decode. Certificates are always verified |
+| `core/urlSafety.ts` | Outbound guard: only public HTTP(S) addresses on ports 80 and 443, re-checked after every redirect (redirects are followed by hand) |
 | `core/robots.ts` | robots.txt fetch/parse/cache, with the zero-directive fix |
 | `core/thaiDate.ts` | Buddhist Era conversion, three date formats, comment windows, currency |
 | `core/awardStatus.ts` | Thai keyword classifier — priority-ordered, ported verbatim |
@@ -227,7 +228,8 @@ Python's `urllib.robotparser` returns `can_fetch() === false` for a robots.txt w
 1. **Honest User-Agent** naming the project with a contact route. No browser impersonation.
 2. **Per-host serialised requests** with a ≥1s gap, raised if robots.txt asks for more. Hosts are independent of one another.
 3. **robots.txt checked on downloads, not just page fetches.** BMA's old CMS allows crawling its listing pages while disallowing the `/upload/` path its PDFs live under. A pipeline that checks only page fetches downloads files the site asked it not to — that was missed on a first pass in the research project and the PDFs had to be deleted afterwards.
-4. **Broken TLS chains retry rather than crash.** Several `.go.th` hosts (confirmed: dft.go.th) serve incomplete certificate chains. Since this is public data behind no login, the fallback re-requests with verification disabled *for that one request* via `node:https` — never by setting `NODE_TLS_REJECT_UNAUTHORIZED` — and flags `insecure: true` so it lands on the job record instead of passing silently.
+4. **Broken TLS chains fail, on purpose.** Several `.go.th` hosts (confirmed: dft.go.th) serve incomplete certificate chains. Until 22 November 2026 the client retried such a request once with verification disabled and flagged it `insecure`. That fallback was removed in the security hardening: a certificate failure is now an error on the job record, and the `insecure` / `insecureTransport` flags survive only on files downloaded before then.
+5. **Only public destinations.** Every URL the crawler fetches, including `robots.txt` and each redirect hop, must resolve to a public address over HTTP(S) on port 80 or 443. That stops a crafted link on an agency page from steering the crawler at the server's own network.
 
 Responses are decoded using the charset the server declares; several Thai CMSes still serve `windows-874`/TIS-620, and reading those as UTF-8 turns every Thai keyword into replacement characters — breaking classification silently rather than throwing.
 
@@ -311,7 +313,7 @@ Additions to the collections in [database-design.md](database-design.md):
 > Comment-window **status** is deliberately *not* stored. It changes every midnight and a stored copy goes stale between runs. Query it as `start <= now <= end`, which the compound index serves.
 
 **`documents`**
-- `origin` — `{ sourceUrl, label, storageKey, sha256, downloadedAt, insecureTransport }`
+- `origin` — `{ sourceUrl, label, storageKey, sha256, downloadedAt, insecureTransport }` (`insecureTransport` can be true only on files downloaded before 22 November 2026)
 - Indexes on `origin.sha256` and `origin.storageKey`
 
 **`scrape_jobs`**
@@ -367,7 +369,7 @@ npm run extract -- --analyze-outliers
 | `GET /api/documents/:id/file` | The original stored document bytes (Section 13.13) |
 | `GET /api/audit-log` | Every recorded human action, filterable (Section 13.14) |
 
-`POST .../run` is **synchronous today**. A full DEPA pull with attachments takes minutes, so this is the first thing to move behind a queue. **Authentication:** every route under `/api/extraction`, `/api/review` and `/api/audit-log` requires an **admin** token; `GET /api/tors*` is public and returns published records only. The write endpoints still take the acting admin's id in the request body (`actorId`) rather than reading it from the session — see 13.6. The complete route list, with parameters and examples, is in the [API reference](api-reference.md).
+`POST .../run` is **synchronous today**. A full DEPA pull with attachments takes minutes, so this is the first thing to move behind a queue. **Authentication:** every route under `/api/extraction`, `/api/review` and `/api/audit-log` requires an **admin** token; `GET /api/tors*` is public and returns published records only. The write endpoints record the signed-in admin, read from the session, as the actor — see 13.6. The complete route list, with parameters and examples, is in the [API reference](api-reference.md).
 
 ---
 
@@ -407,7 +409,8 @@ Three more jobs share the same scheduler and run after the crawls, so each refle
 | Listing page 404 | End of pagination — stop cleanly, not an error |
 | Detail page unreadable | Warn, keep the listing row (title + URL still have value) |
 | Attachment blocked by robots.txt | Warn and skip. Not a bug — the site said no |
-| Broken TLS chain | Retry once without verification, flag `insecure` |
+| Broken TLS chain | Fail the request and log it; verification is never turned off |
+| Destination is not a public HTTP(S) address | Refuse before connecting |
 | 5xx / connection reset | Retry with exponential backoff, capped |
 | Crawl dies mid-run | Keep collected rows, mark the job `partial` |
 | One row fails to persist | Warn and continue |
@@ -459,11 +462,10 @@ Fix 5 also revealed that **MOC publishes a real public-comment window inside its
 **Still not built:**
 
 - A job queue behind the trigger route — `POST /api/extraction/sources/:id/run` is still synchronous
-- Trustworthy attribution on review actions — the admin routes now require an admin token, but the write endpoints still record an `actorId` taken from the request body rather than from the session (13.6)
 - A lawful BMA adapter (see Section 9's scope-gap note) and the resulting registry/enum updates a 6th real source would need
 - A database-backed scheduler lock, so more than one back-end instance is safe (13.5)
 
-*Since this list was first written:* authentication and roles were added across the admin routes, and the repository search/filter/sort API now exists as `GET /api/documents` (documented in the [API reference](api-reference.md#search)); `GET /api/tors` remains the minimal published list.
+*Since this list was first written:* authentication and roles were added across the admin routes, review actions now record the signed-in admin as the actor (22 November 2026), and the repository search/filter/sort API now exists as `GET /api/documents` (documented in the [API reference](api-reference.md#search)); `GET /api/tors` remains the minimal published list.
 
 ---
 
@@ -550,7 +552,7 @@ Resolution — turning a `suspected` duplicate into a `confirmed` one — happen
 
 ### 13.6 Review-queue API (`controllers/review.controller.ts`, `/api/review/*`)
 
-Matches FR-ADM-01/03/05/06. Every `/api/review/*` route now requires an **admin** token, and the review queue has a screen (`/admin/review`; `supersede` and manual upload still have none). One loose end remains: every write endpoint takes `actorId` in the request body and the audit trail records *that* value, not the signed-in user's id (a `TODO` in `review.controller.ts`). The web app sends the signed-in admin's own id, so its entries are accurate; a direct API call could name anyone. `GET /queue` lists `pending_review` records oldest-first; `POST /queue/:id/approve|reject|supersede` transition a record and write an `AuditLog` entry on every action. `reject` requires a `reason`; `supersede` validates the target isn't itself terminal and sets `duplicateOf`/`duplicateStatus: 'confirmed'` on the *current* record, leaving the target as the sole published survivor.
+Matches FR-ADM-01/03/05/06. Every `/api/review/*` route now requires an **admin** token, and the review queue has a screen (`/admin/review`; `supersede` and manual upload still have none). Every write endpoint records the signed-in admin, read from the session, as the actor in the audit trail. (Until 22 November 2026 it trusted an `actorId` sent in the request body.) `GET /queue` lists `pending_review` records oldest-first; `POST /queue/:id/approve|reject|supersede` transition a record and write an `AuditLog` entry on every action. `reject` requires a `reason`; `supersede` validates the target isn't itself terminal and sets `duplicateOf`/`duplicateStatus: 'confirmed'` on the *current* record, leaving the target as the sole published survivor.
 
 ### 13.7 TOR read API (`controllers/tor.controller.ts`, `/api/tors*`)
 
@@ -592,7 +594,7 @@ Also corrected the same day: `VERTEX_AI_LOCATION` moved from `us-central1` to **
 
 Three more Jira cards (SCRUM-15/37/41 = US-015/037/041) were checked against this codebase. Two were already satisfied by work landed earlier in this section; one was a real gap, now closed.
 
-**US-041 — "an agency changing its site does not take that agency offline for vendors."** This was the actual gap: nothing let an admin post a TOR when a source site changes shape or goes down and the scraper can't reach it. `POST /api/review/tors` (`controllers/review.controller.ts`'s `createManualTor`) closes it — multipart body (`file` + `agencyId`, `title`, `actorId`, and the same optional fields a scraped TOR has: `referenceNumber`, `description`, `procurementMethod`, `budgetAmountThb`, `submissionDeadline`). It deliberately creates **no separate manual-publish path**: the Tor is created at `status: 'discovered'` with `source.importMethod: 'manual'` and no `sourceRef` (that subdocument is scrape-only identity/dedup metadata — its upsert-key index is sparse for exactly this case), and the file is written to the same content-addressed blob store and left as a `Document` at `status: 'uploaded'`. That status is what puts it in the extraction sweep's existing work queue — the same OCR, structured extraction, grounding, and confidence-gated routing (BR-03) a scraped TOR goes through, with zero special-casing. `file` is required, matching BR-05 ("nothing publishes without a source document") for the same reason it's required on the scrape path. Verified live: a manual TOR posted against a real Atlas cluster correctly stayed invisible on `GET /api/tors` and out of `GET /api/review/queue` while `discovered`, then a real extraction-sweep run picked up its document unmodified and routed it to `pending_review` at confidence 0 (no GCP credentials in dev) — proving the reuse, not just asserting it. Test data was deleted afterward.
+**US-041 — "an agency changing its site does not take that agency offline for vendors."** This was the actual gap: nothing let an admin post a TOR when a source site changes shape or goes down and the scraper can't reach it. `POST /api/review/tors` (`controllers/review.controller.ts`'s `createManualTor`) closes it — multipart body (`file` + `agencyId`, `title`, and the same optional fields a scraped TOR has: `referenceNumber`, `description`, `procurementMethod`, `budgetAmountThb`, `submissionDeadline`). It deliberately creates **no separate manual-publish path**: the Tor is created at `status: 'discovered'` with `source.importMethod: 'manual'` and no `sourceRef` (that subdocument is scrape-only identity/dedup metadata — its upsert-key index is sparse for exactly this case), and the file is written to the same content-addressed blob store and left as a `Document` at `status: 'uploaded'`. That status is what puts it in the extraction sweep's existing work queue — the same OCR, structured extraction, grounding, and confidence-gated routing (BR-03) a scraped TOR goes through, with zero special-casing. `file` is required, matching BR-05 ("nothing publishes without a source document") for the same reason it's required on the scrape path. Since 22 November 2026 it must also be a real PDF and, where scanning is required, pass a ClamAV scan before anything is stored ([upload checks](api-reference.md#post-reviewtors)). Verified live: a manual TOR posted against a real Atlas cluster correctly stayed invisible on `GET /api/tors` and out of `GET /api/review/queue` while `discovered`, then a real extraction-sweep run picked up its document unmodified and routed it to `pending_review` at confidence 0 (no GCP credentials in dev) — proving the reuse, not just asserting it. Test data was deleted afterward.
 
 **US-015 — "a standardised summary of each TOR ... without reading a 40-page scanned PDF."** Already built: `gemini.service.ts`'s prompt asks explicitly for "a concise, standardised natural-language summary," stored at `Tor.summaryAi.text` by the extraction sweep (13.2/13.3) and returned by `GET /api/tors/:id` always labelled `machineGenerated: true, authoritative: false` (13.7). No change needed.
 
@@ -615,7 +617,7 @@ Computed on request, not on a schedule: for 6 sources this is 6 cheap indexed qu
 
 ### 13.13 Field correction, with the source document beside it (US-043)
 
-`PATCH /api/review/queue/:id/fields` accepts `{ actorId, corrections: { <fieldKey>: <value>, ... } }`, keyed by the same 16 `EXTRACTED_FIELD_KEYS` everything else in this section uses. Each value is coerced by `core/fieldCoercion.ts` — extracted out of `pipeline/aiExtraction.ts`'s `applyExtractionToTor` (which now imports the same functions) specifically so a human correction and an AI-written value are coerced by identical rules and can never end up in a different shape on the Tor. A value that fails its field's coercion (an unparseable date, a non-enum `estimatedComplexity`) is rejected with a 400 rather than silently dropped or half-applied.
+`PATCH /api/review/queue/:id/fields` accepts `{ corrections: { <fieldKey>: <value>, ... } }`, keyed by the same 16 `EXTRACTED_FIELD_KEYS` everything else in this section uses. Each value is coerced by `core/fieldCoercion.ts` — extracted out of `pipeline/aiExtraction.ts`'s `applyExtractionToTor` (which now imports the same functions) specifically so a human correction and an AI-written value are coerced by identical rules and can never end up in a different shape on the Tor. A value that fails its field's coercion (an unparseable date, a non-enum `estimatedComplexity`) is rejected with a 400 rather than silently dropped or half-applied.
 
 Every corrected key is added to `Tor.extraction.humanCorrectedFields` — the guard `aiExtraction.ts` has carried defensively since 13.3, before this endpoint existed to populate it, now finally does its job: a later re-extraction of the same TOR will never silently overwrite the fix. Allowed on `pending_review` (the normal review-time repair) and `published` (a correction found after the fact); rejected on `rejected`/`superseded`/`archived`, where there's nothing live left to correct.
 

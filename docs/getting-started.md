@@ -102,10 +102,10 @@ Go to **Create account (สมัครใช้งาน)** and register as a *
 
    ```
    [email] Development log for you@example.com: Verify your City of Software email address
-   Welcome to City of Software. Verify your email address: http://localhost:4000/api/auth/verify-email?token=…
+   Welcome to City of Software. Verify your email address: http://localhost:3000/verify-email#token=…
    ```
 
-4. Open that link in your browser. It verifies the address, creates the account, and redirects to the web app's "email verified" page.
+4. Open that link in your browser (the web app must be running). The page sends the token to the API, which creates the account, and then shows "email verified".
 5. Sign in at `/login`.
 
 > [!NOTE]
@@ -184,7 +184,7 @@ cd back-end
 npm test
 ```
 
-About 200 tests finish in a few seconds. They need no database and no Google account. For the front-end, `npm run typecheck` and `npm run build` are the checks.
+225 tests finish in a few seconds. They need no database and no Google account. For the front-end, `npm run typecheck` and `npm run build` are the checks.
 
 ## Where next
 

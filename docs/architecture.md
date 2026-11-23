@@ -26,6 +26,9 @@ flowchart TB
     GCP["Google Cloud<br/>Gemini · Document AI"]
     SITES["Agency websites<br/>DGA · MOL · MOC · ITD · DEPA"]
     MAIL["Gmail SMTP<br/>or Resend"]
+    CLAM["ClamAV<br/>malware scan"]
+    GOOG["Google OAuth<br/>(optional sign-in)"]
+    HIBP["Have I Been Pwned<br/>password range API"]
 
     UI -->|"fetch + Bearer token"| API
     API --- DB
@@ -33,25 +36,31 @@ flowchart TB
     API -->|"admin presses Run"| PIPE
     PIPE --> DB
     PIPE --> FS
-    PIPE -->|"HTTP, robots.txt-aware"| SITES
+    PIPE -->|"HTTPS, robots.txt-aware"| SITES
     PIPE --> GCP
     PIPE -->|"stage changed"| MATCH
     MATCH --> DB
     MATCH --> MAIL
     API -->|"verification and reset emails"| MAIL
+    API -->|"uploaded PDFs"| CLAM
+    API <-->|"sign-in"| GOOG
+    API -->|"new passwords, hash prefix only"| HIBP
 ```
 
 | Part | What it is | Worth knowing |
 | --- | --- | --- |
-| **Web app** (`front-end/`) | Next.js 15 App Router, React 19, Thai-language UI | Every page is client-rendered. The browser calls the API directly with `fetch`; there is no server-side data fetching and no proxy. That is why the API's `CORS_ORIGIN` must contain the web app's origin, and why `NEXT_PUBLIC_API_URL` is baked into the JavaScript at build time. |
-| **API** (`back-end/src/routes`, `controllers`) | Express 4 under `/api` | Stateless apart from the database. Authentication is a Bearer token ([details](authentication.md)). |
+| **Web app** (`front-end/`) | Next.js 16 App Router, React 19, Thai-language UI | Every page is client-rendered. The browser calls the API directly with `fetch`; there is no server-side data fetching and no proxy. That is why the API's `CORS_ORIGIN` must contain the web app's origin, and why `NEXT_PUBLIC_API_URL` is baked into the JavaScript at build time. |
+| **API** (`back-end/src/routes`, `controllers`) | Express 4 under `/api` | Stateless apart from the database. Authentication is a Bearer token ([details](authentication.md)). Every response carries security headers and a request id; per-IP rate limits guard sign-in and writes; security events are logged as JSON ([security logging](security-logging.md)). |
 | **Extraction pipeline** (`back-end/src/extraction`) | Site adapters, normaliser, attachment downloader, AI sweep | Crawling and AI extraction are two separate jobs on purpose ([why](#2-crawl-and-extract-are-separate-jobs)). |
 | **Scheduler** (`back-end/src/scheduler`) | `node-cron` inside the API process | Off unless `SCHEDULER_ENABLED=true`. Runs eight jobs ([table below](#scheduled-jobs)). |
 | **Matching and alerts** (`matching/`, `notifications/`) | Pure matching functions plus the email fan-out | Triggered by the crawler noticing a stage change ([details](notifications-and-matching.md)). |
-| **MongoDB Atlas** | The only database | 16 collections ([database design](database-design.md)). Not part of the Docker stack. |
+| **MongoDB Atlas** | The only database | 19 collections ([database design](database-design.md)). Not part of the Docker stack. |
 | **Blob store** | PDFs written to `EXTRACTION_STORAGE_DIR` | Content-addressed by SHA-256, so the same file is stored once. Local disk today; the code sits behind a `BlobStore` interface so object storage can replace it. |
 | **Google Cloud** | Gemini reads PDFs and images directly; Document AI is the OCR fallback | Optional. With `GCP_PROJECT_ID` unset every AI call returns a safe, zero-confidence stub. |
 | **Email** | Gmail SMTP, else Resend, else a console log (development only) | In production, sending with none configured is an error. |
+| **ClamAV** | The open-source malware scanner, as a private container in Docker Compose | Every uploaded PDF is streamed to it before anything parses or stores it. Required in production, off by default in development ([configuration](configuration.md#security)). |
+| **Google OAuth** | Optional "Continue with Google" | Off until the three `GOOGLE_OAUTH_*` settings exist ([how it works](authentication.md#signing-in-with-google)). |
+| **Have I Been Pwned** | Public breached-password range API | Asked at sign-up and password reset. Only the first five characters of the password's SHA-1 hash leave the server. |
 
 ---
 
@@ -101,12 +110,12 @@ This is an illustrative path, not a log of a real record.
 ```
 back-end/src/
 ├── index.ts          boot: connect to MongoDB, start the scheduler, listen
-├── app.ts            Express app: CORS, logging, body parsing, /api, error handlers
+├── app.ts            Express app: request ids, security headers, CORS, logging, body limits, /api, error handlers
 ├── routes/           URL → middleware → controller (one file per feature)
 ├── controllers/      HTTP in, HTTP out: validate input, call domain code, shape JSON
-├── middleware/       auth guards, file upload (20 MB, in memory), error handling
+├── middleware/       auth guards, rate limits, security logging, PDF upload checks and malware scan (20 MB, in memory), error handling
 ├── models/           Mongoose schemas
-├── services/         talking to the outside: sessions, passwords, email, Gemini, Document AI
+├── services/         talking to the outside: sessions, passwords, breached-password check, Google OAuth, ClamAV, email, Gemini, Document AI
 ├── extraction/       registry · adapters/ · core/ · pipeline/ · cli.ts
 ├── analytics/        budget comparison, agency frequency, outlier maths, key dates
 ├── matching/         qualification check, match reasons
@@ -119,10 +128,10 @@ back-end/src/
 ### A request, end to end
 
 1. The browser calls the API (`NEXT_PUBLIC_API_URL` plus a path such as `/tors/…`), with an `Authorization: Bearer …` header when signed in.
-2. Express applies CORS (the origin must be in `CORS_ORIGIN`), request logging (`morgan`) and body parsing (JSON and URL-encoded).
-3. `/api` dispatches to a feature router. Protected routes run an auth guard first: `requireAuthenticated`, `requireVendor`, `requireAdmin` or `requireSelfOrAdmin`.
+2. Express gives the request an id (`X-Request-ID`), sets the security headers, applies CORS (the origin must be in `CORS_ORIGIN`), logs the request with its path but never its query string (`morgan`), parses the body (JSON and URL-encoded, at most 100 KB) and marks the response `Cache-Control: no-store`.
+3. `/api` applies the per-IP write limit and dispatches to a feature router. Protected routes run an auth guard first: `requireAuthenticated`, `requireVendor`, `requireAdmin` or `requireSelfOrAdmin`.
 4. The controller validates the input, reads or writes Mongoose models, and delegates anything non-trivial to a domain module.
-5. Errors go to `next(err)` and become `{ "error": "…" }` with status 500. An unknown route returns 404 with the same shape.
+5. Errors go to `next(err)` and become a generic `{ "error": "Internal Server Error" }` with status 500; the full error goes to the server's log, never to the client. An unknown route returns 404 `{ "error": "Route not found." }`.
 
 Every protected request does a real database check. The signed token is verified, then the matching `Session` document must be unrevoked and not idle-expired (and has its sliding window refreshed), then the `User` must be `active` with the same `sessionVersion`. That is what makes logout, suspension and role changes take effect immediately. See [authentication](authentication.md).
 
@@ -189,7 +198,7 @@ An `identityKey` decides "have I seen this?", a `contentHash` decides "has it ch
 
 ### 7. Signed links instead of sessions for single-purpose access
 
-Opening a source document and one-click unsubscribe both use small HMAC-signed tokens (15-minute and non-expiring respectively) rather than a session. A link can be shared without sharing an identity, and an unsubscribe link in an old email still works.
+Opening a source document and one-click unsubscribe both use small HMAC-signed tokens (15-minute and non-expiring respectively) rather than a session. A link can be shared without sharing an identity, and an unsubscribe link in an old email still works. Verification and password-reset links carry their token in the URL fragment, which the browser never sends to a server, and the page hands it to the API in a `POST` body.
 
 ### 8. Sign-up stores nothing until the email is verified
 
@@ -201,7 +210,7 @@ Anything that decides something (`matchQualifications`, `compareBudgets`, `class
 
 ### 10. One back-end instance
 
-The scheduler's overlap lock is an in-memory set. Two instances would each run every crawl. Scaling out first needs a database-backed lock.
+The scheduler's overlap lock is an in-memory set, and so are the rate-limit counters. Two instances would each run every crawl and each keep their own limits. Scaling out first needs a database-backed lock and a shared rate-limit store.
 
 ---
 
@@ -215,8 +224,8 @@ Read this before you promise anything to anyone.
 - **Search is a regular-expression match** over title, agency, technologies, project type and the AI summary. There is no stemming or typo tolerance, and "Highest Match %" simply counts how many of your search terms appear.
 - **Alerts are crawl-triggered.** Approving a TOR does not itself send one. See [when an alert is sent](notifications-and-matching.md#when-an-alert-is-sent).
 - **The session token sits in `localStorage`.** That is simple and works across tabs, and it means a cross-site-scripting bug would expose it. Nothing in the app renders untrusted HTML, but keep it in mind.
-- **Some admin endpoints trust the client for "who did this".** The review endpoints take an `actorId` in the request body, and that is what the audit log records. The caller must be an admin, but the value is not checked against the signed-in user.
-- **Two document endpoints are public.** `GET /api/documents/:id` and `GET /api/documents/:id/file` need no sign-in (the file endpoint only checks a token if you send one). Anyone who knows a document id can read it.
+- **A document's stored record is public.** `GET /api/documents/:id` needs no sign-in and returns the whole record, extracted text included, even for a TOR that is not published. The file itself needs a signed link.
+- **TLS ends at a reverse proxy.** The API sends HSTS and other security headers, but it does not serve HTTPS itself ([deployment](deployment.md)).
 - **MongoDB outages are survivable, not graceful.** The server still starts if MongoDB is unreachable, but every database-backed request fails until it returns.
 
 The full, itemised list is in [Status and limitations](status.md).
@@ -227,5 +236,6 @@ The full, itemised list is in [Status and limitations](status.md).
 
 - [Extraction pipeline](extraction-pipeline.md): the crawler and AI sweep in depth.
 - [Database design](database-design.md): the collections behind the diagram.
-- [Authentication](authentication.md): accounts, sessions, signed links.
+- [Authentication](authentication.md): accounts, sessions, Google sign-in, signed links.
+- [Threat model](threat-model.md) and [security testing](security-testing.md): the threats, their controls, and how they are checked.
 - [Notifications and matching](notifications-and-matching.md): how an alert is decided.

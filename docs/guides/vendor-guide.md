@@ -22,7 +22,7 @@ The app is mostly in Thai; the Advanced search page is in English. Menu and butt
 
 Choose **Sign up (สมัครใช้งาน)**, then **Software vendor (ผู้ขายซอฟต์แวร์)**. It takes three steps.
 
-**1. Your details.** Name, organisation, work email, phone and a password of **at least 10 characters** (very common passwords such as `password123` are refused).
+**1. Your details.** Name, organisation, work email, phone and a password of **at least 10 characters**. Very common passwords such as `password123` are refused, and so is any password that has appeared in a known data breach; choose another if you see that message.
 
 **2. Your capability profile.** This is what lets the platform match you to the right TORs and compare you with their requirements.
 
@@ -42,10 +42,15 @@ You need at least **one technology or service category**. Everything is **self-d
 
 BMA officials (เจ้าหน้าที่กรุงเทพมหานคร) choose that option on the first screen instead; it skips the profile step.
 
+### Or sign up with Google
+
+Where the platform has Google sign-in switched on, **Continue with Google (ดำเนินการต่อด้วย Google)** on the sign-up page lets you skip the password. After Google, you give your name, organisation, phone and whether you are a software vendor or a BMA official, and your account is ready at once: there is no verification email, because Google has already confirmed your address. Vendors then fill in the capability profile under **Account profile (โปรไฟล์บัญชี)**, since matching needs it. An account made this way has no password you know; sign in with Google, or use **Forgot your password?** to set one.
+
 ## Signing in
 
-**Sign in (เข้าสู่ระบบ)** with your email and password.
+**Sign in (เข้าสู่ระบบ)** with your email and password, or with Google if you signed up that way or have connected it.
 
+- Already have a password account and want to use Google too? Sign in with your password, open **Settings → Personal information (ข้อมูลส่วนตัว)** and connect your Google account. Signing in with Google first will not work: a matching email address is not enough, on purpose.
 - Five wrong passwords lock the account for **15 minutes**.
 - You are signed out after **30 minutes of inactivity**, and always after 8 hours.
 - **Forgot your password? (ลืมรหัสผ่าน)** sends a one-hour reset link. For privacy the page gives the same answer whether or not the address is registered. Resetting signs you out of every device.
@@ -147,7 +152,7 @@ Each saved TOR has a **private note (บันทึกส่วนตัว)** 
 
 ### Compare
 
-On the **Dashboard**, tick **2 to 4** saved TORs and press **Compare (เปรียบเทียบ)**. You get a side-by-side view of budget (with whether it includes VAT), duration, deadline, technologies, qualification requirements, evaluation criteria and deliverables. **Export / print** produces a PDF.
+Open **Compare TORs (เปรียบเทียบ TOR)** in the sidebar. It takes two steps: tick **2 to 4** of your saved TORs, then view the comparison. You get a side-by-side view of budget (with whether it includes VAT), duration, deadline, technologies, qualification requirements, evaluation criteria and deliverables. **Export / save PDF (ส่งออก / บันทึก PDF)** produces a PDF.
 
 ### Calendar
 
@@ -159,7 +164,7 @@ On the **Dashboard**, tick **2 to 4** saved TORs and press **Compare (เปร�
 
 ### The Dashboard
 
-**Dashboard (แดชบอร์ด)** is your starting page: a profile-completeness prompt, your recent matches (each card shows a match percentage and the main reason it matched; open the TOR for the full list), your saved TORs with notes, and the compare picker.
+**Dashboard (แดชบอร์ด)** is your starting page: a profile-completeness prompt, your saved TORs, your recent matches (each card shows a match percentage and the main reason it matched; open the TOR for the full list) and the deadlines coming up in the next 14 days.
 
 ---
 

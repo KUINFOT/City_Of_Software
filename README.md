@@ -58,7 +58,8 @@ The full tour is in [docs/architecture.md](docs/architecture.md).
 
 | Area | Where it stands |
 | --- | --- |
-| Accounts, vendor profiles, sign-in | ✅ Built. Sign-up and password-reset emails need Gmail or Resend credentials; without them the link is printed in the API's terminal. |
+| Accounts, vendor profiles, sign-in | ✅ Built. Sign-up and password-reset emails need Gmail or Resend credentials; without them the link is printed in the API's terminal. Google sign-in is optional and needs Google OAuth credentials. |
+| Security | ✅ Rate limits, breached-password check, security headers, signed document links, PDF upload checks with ClamAV scanning, append-only audit log. TLS is up to your reverse proxy ([threat model](docs/threat-model.md)). |
 | Search, browse, TOR detail | ✅ Built, on reviewed (published) TORs. |
 | Saved TORs, notes, compare, calendar | ✅ Built. |
 | Pricing analytics | ✅ Built. Reports "not enough data" until a comparable set has at least 5 records. |
@@ -141,7 +142,7 @@ The deeper design documents are [Authentication](docs/authentication.md), [Notif
 
 | Layer | Technology |
 | --- | --- |
-| Front-end | Next.js 15 (App Router) · React 19 · TypeScript · Lucide icons |
+| Front-end | Next.js 16 (App Router) · React 19 · TypeScript · Lucide icons |
 | Back-end | Node.js 22 · Express 4 · TypeScript · Mongoose 9 |
 | Database | MongoDB Atlas |
 | AI | Google Cloud Document AI (OCR fallback) · Gemini via the `@google/genai` SDK |
@@ -152,8 +153,8 @@ The deeper design documents are [Authentication](docs/authentication.md), [Notif
 ## Tests and CI
 
 ```bash
-cd back-end  && npm run typecheck && npm test            # 200+ unit tests in about 5 seconds
+cd back-end  && npm run typecheck && npm test            # 225 unit tests in a few seconds
 cd front-end && npm run typecheck && npm run build
 ```
 
-The back-end tests need no database and no Google account. CI runs the same checks on every pull request and also builds both Docker images and waits for them to report healthy. More in the [development guide](docs/development.md).
+The back-end tests need no database and no Google account. CI type-checks and builds both packages on every pull request, builds the Docker images and waits for the stack to report healthy, and runs CodeQL and an OWASP ZAP baseline scan. **It does not run the back-end tests yet**: on CI's Node 20, `npm test` finds no `.ts` test files and passes without running any, so run them locally before you push. More in the [development guide](docs/development.md#ci).

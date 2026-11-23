@@ -2,13 +2,13 @@
 
 The Next.js web app for vendors, BMA officials and administrators. The interface is in **Thai**, except the Advanced search page (`/search`), which is in English. The code and these docs are in English.
 
-**Stack:** Next.js 15 (App Router) · React 19 · TypeScript · [Lucide](https://lucide.dev) icons. Styling is plain CSS in `app/globals.css`; there is no UI framework.
+**Stack:** Next.js 16 (App Router) · React 19 · TypeScript · [Lucide](https://lucide.dev) icons. Styling is plain CSS in `app/globals.css`; there is no UI framework.
 
 > The app talks to the [back-end API](../back-end/README.md) for everything: accounts, TORs, saved items, alerts, analytics and the admin tools. It needs a running API to show anything beyond the sign-in and landing pages.
 
 ## Requirements
 
-- Node.js 22 recommended (Next.js 15 itself needs 18.18 or newer; the Docker image uses 22)
+- Node.js 22 recommended (Next.js 16 itself needs 20.9 or newer; the Docker image uses 22)
 - npm 9 or newer
 - A running back-end ([setup](../back-end/README.md#set-up))
 
@@ -43,22 +43,23 @@ The sidebar and headers show Thai labels. English meanings are given here so you
 | `/browse-tors` | Browse TORs (ค้นหา TOR) | Published TORs, newest first, with a title/agency search box and a stage drop-down. Reads `GET /api/tors` |
 | `/search` | Advanced search (ค้นหาขั้นสูง) | Keyword search, filters (technology, project type, agency, stage, budget range, date ranges, availability) and seven sort orders. The whole search is stored in the URL. Reads `GET /api/documents` |
 | `/tors/[id]` | TOR detail | Summary, key dates with days remaining, requirements, provenance and the source document, AI caution flags, outlier note, and (signed in as a vendor) the qualification-match panel and match reasons. Also save, and print to PDF |
-| `/login`, `/register` | Sign in, create account | Vendors or BMA officials |
+| `/login`, `/register` | Sign in, create account | Vendors or BMA officials, by email or with *Continue with Google* (ดำเนินการต่อด้วย Google) when the server has Google sign-in configured. `/login` also finishes a Google sign-in: the one-use token arrives in the URL fragment |
+| `/oauth-onboarding` | Google sign-up details | New Google users give name, organisation, phone and role; the account is created at once |
 | `/vendor-onboarding` | Vendor profile step | Step 2 of 3 of sign-up for vendors: organisation, stack, certifications, past contracts |
-| `/verify-email` | Email verification | Landing page for the verification link, and "send it again" |
-| `/forgot-password`, `/reset-password` | Password recovery | Request and use a one-hour reset link |
+| `/verify-email` | Email verification | Takes the token from the link's URL fragment (`#token=…`), posts it to the API and shows the result; also "send it again" |
+| `/forgot-password`, `/reset-password` | Password recovery | Request and use a one-hour reset link (its token also travels in the URL fragment) |
 | `/unsubscribed` | Unsubscribe result | Where the one-click unsubscribe link lands |
 
 ### Signed in (account area with the sidebar)
 
 | Route | Page (Thai title) | Who | What it does |
 | --- | --- | --- | --- |
-| `/dashboard` | Dashboard (แดชบอร์ด) | Everyone | Greeting, profile-completeness prompt, recent matches (percentage and main reason), saved TORs with private notes, and the 2–4 TOR compare picker |
-| `/saved-projects` | Saved projects (โครงการที่บันทึกไว้) | Vendors | Your shortlist |
+| `/dashboard` | Dashboard (แดชบอร์ด) | Everyone | Greeting, profile-completeness prompt, saved TORs, recent matches (percentage and main reason) and deadlines in the next 14 days |
+| `/saved-projects` | Saved projects (โครงการที่บันทึกไว้) | Vendors | Your shortlist, with private notes |
 | `/imminent-deadlines` | Approaching deadlines (กำหนดส่งที่ใกล้ถึง) | Vendors | Every published TOR due within 14 days, with save buttons |
 | `/calendar` | Calendar (ปฏิทิน) | Vendors | Submission deadlines by month, for saved or all projects |
-| `/compare` | Side-by-side compare | Vendors | Budget, duration, requirements and deliverables for 2–4 saved TORs; print to PDF |
-| `/settings` | Account and profile (โปรไฟล์บัญชี) | Everyone | Edit the vendor profile (versioned), alert frequency, followed agencies and keywords |
+| `/compare` | Compare TORs (เปรียบเทียบ TOR) | Vendors | Two steps: pick 2–4 saved TORs, then see budget, duration, requirements and deliverables side by side; export or print to PDF |
+| `/settings` | Account and profile (โปรไฟล์บัญชี) | Everyone | Edit the vendor profile (versioned), connect a Google account, alert frequency, followed agencies and keywords |
 | `/analytics/budgets` | Historical budgets (เปรียบเทียบงบประมาณ) | Everyone | Distribution and yearly trend for a comparable set |
 | `/analytics/agencies` | Agency frequency (ความถี่รายหน่วยงาน) | Everyone | How often each agency procures, and the typical size |
 
