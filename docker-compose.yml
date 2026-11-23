@@ -8,6 +8,25 @@
 name: city-of-software
 
 services:
+  clamav:
+    image: clamav/clamav:stable
+    init: true
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    # The official image needs its default capabilities briefly during startup
+    # to initialise its virus-definition directory, then drops privileges for
+    # the scanner process.  `cap_drop: ALL` prevents that initialisation.
+    healthcheck:
+      # The official image exposes clamd on its internal TCP port 3310.
+      # `clamdscan --ping` defaults to a local Unix socket, which would mark
+      # this container unhealthy even while its network scanner is ready.
+      test: ["CMD-SHELL", "echo 'PING' | nc -w 2 127.0.0.1 3310 | grep -q 'PONG'"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 2m
+
   back-end:
     build:
       context: ./back-end
@@ -42,11 +61,23 @@ services:
       APP_URL: ${APP_URL:-http://localhost:3000}
       PUBLIC_API_URL: ${PUBLIC_API_URL:-http://localhost:4000/api}
 
+      # Google OAuth / OpenID Connect. Leave blank to disable its routes.
+      GOOGLE_OAUTH_CLIENT_ID: ${GOOGLE_OAUTH_CLIENT_ID:-}
+      GOOGLE_OAUTH_CLIENT_SECRET: ${GOOGLE_OAUTH_CLIENT_SECRET:-}
+      GOOGLE_OAUTH_REDIRECT_URI: ${GOOGLE_OAUTH_REDIRECT_URI:-http://localhost:4000/api/auth/google/callback}
+
       # Email (Gmail SMTP or Resend). The API needs one of them in production.
       GMAIL_USER: ${GMAIL_USER:-}
       GMAIL_APP_PASSWORD: ${GMAIL_APP_PASSWORD:-}
       RESEND_API_KEY: ${RESEND_API_KEY:-}
       EMAIL_FROM: ${EMAIL_FROM:-}
+
+      # ClamAV is isolated on the Compose network and is required before a
+      # user-provided PDF reaches an extractor or persistent storage.
+      UPLOAD_MALWARE_SCAN_MODE: required
+      UPLOAD_MALWARE_SCANNER_HOST: clamav
+      UPLOAD_MALWARE_SCANNER_PORT: "3310"
+      UPLOAD_MALWARE_SCAN_TIMEOUT_MS: "10000"
 
       # Google Cloud. Leave GCP_PROJECT_ID empty to run on the built-in stubs.
       GCP_PROJECT_ID: ${GCP_PROJECT_ID:-}
@@ -66,6 +97,9 @@ services:
       - ${GCP_CREDENTIALS_DIR:-./secrets}:/run/secrets:ro
     ports:
       - "${BACKEND_PORT:-4000}:4000"
+    depends_on:
+      clamav:
+        condition: service_healthy
 
   front-end:
     build:

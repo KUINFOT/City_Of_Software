@@ -12,6 +12,7 @@ import agencyRoutes from './agency.routes';
 import bookmarkRoutes from './bookmark.routes';
 import comparisonRoutes from './comparison.routes';
 import analyticsRoutes from './analytics.routes';
+import { apiWriteLimiter } from '../middleware/security.middleware';
 
 const router = Router();
 
@@ -20,6 +21,7 @@ router.get('/health', (_req: Request, res: Response) => {
 });
 
 router.use('/auth', authRoutes);
+router.use(apiWriteLimiter);
 router.use('/documents', documentRoutes);
 router.use('/extraction', extractionRoutes);
 router.use('/review', reviewRoutes);

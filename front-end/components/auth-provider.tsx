@@ -1,7 +1,7 @@
 "use client";
 
 import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useState } from "react";
-import { AuthSession, AuthUser, login, logout, RegistrationResponse, register } from "@/lib/auth-api";
+import { AuthSession, AuthUser, completeGoogleLogin, completeGoogleOnboarding, login, logout, RegistrationResponse, register } from "@/lib/auth-api";
 
 type RegistrationInput = { name: string; email: string; password: string; organization: string; phone: string; role: "vendor" | "reviewer" };
 type AuthResult = { ok: true; registration?: RegistrationResponse } | { ok: false; message: string };
@@ -11,6 +11,8 @@ type AuthContextValue = {
   token: string | null;
   ready: boolean;
   signIn: (email: string, password: string) => Promise<AuthResult>;
+  completeGoogleSignIn: (token: string) => Promise<AuthResult>;
+  completeGoogleRegistration: (token: string, fields: { name: string; organization: string; phone: string; role: "vendor" | "reviewer" }) => Promise<AuthResult>;
   register: (input: RegistrationInput) => Promise<AuthResult>;
   signOut: () => Promise<void>;
 };
@@ -87,6 +89,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return { ok: true };
       } catch (error) {
         return { ok: false, message: error instanceof Error ? error.message : "Unable to sign in." };
+      }
+    },
+    completeGoogleSignIn: async (token) => {
+      try {
+        persistSession(await completeGoogleLogin(token));
+        return { ok: true };
+      } catch (error) {
+        return { ok: false, message: error instanceof Error ? error.message : "Unable to complete Google sign-in." };
+      }
+    },
+    completeGoogleRegistration: async (token, fields) => {
+      try {
+        persistSession(await completeGoogleOnboarding(token, fields));
+        return { ok: true };
+      } catch (error) {
+        return { ok: false, message: error instanceof Error ? error.message : "Unable to complete Google registration." };
       }
     },
     register: async (input) => {

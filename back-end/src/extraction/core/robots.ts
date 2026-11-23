@@ -23,6 +23,7 @@
  */
 
 import { URL } from 'node:url';
+import { assertSafeExternalUrl } from './urlSafety';
 
 interface RobotsRule {
   /** Path pattern, supporting the `*` and `$` wildcards. */
@@ -181,11 +182,7 @@ export class RobotsCache {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), this.timeoutMs);
       try {
-        const res = await fetch(`${origin}/robots.txt`, {
-          headers: { 'User-Agent': this.userAgent },
-          signal: controller.signal,
-          redirect: 'follow',
-        });
+        const res = await fetchRobots(`${origin}/robots.txt`, this.userAgent, controller.signal);
         // 404 / 410 means no robots.txt exists, which means no restrictions.
         // 5xx is ambiguous; treat it as permissive to match the reference
         // implementation rather than stalling a run on a flaky server.
@@ -200,4 +197,23 @@ export class RobotsCache {
     this.cache.set(origin, { policy, fetchedAt: Date.now() });
     return policy;
   }
+}
+
+/** Redirects are followed manually so robots retrieval cannot bypass the outbound URL guard. */
+async function fetchRobots(url: string, userAgent: string, signal: AbortSignal): Promise<Response> {
+  let target = url;
+  for (let redirects = 0; redirects <= 5; redirects += 1) {
+    const safeTarget = await assertSafeExternalUrl(target);
+    const response = await fetch(safeTarget, {
+      headers: { 'User-Agent': userAgent },
+      signal,
+      redirect: 'manual',
+    });
+    if (response.status < 300 || response.status >= 400) return response;
+    const location = response.headers.get('location');
+    if (!location) return response;
+    if (redirects === 5) throw new Error(`Too many redirects retrieving robots.txt for ${url}`);
+    target = new URL(location, safeTarget).toString();
+  }
+  throw new Error(`Too many redirects retrieving robots.txt for ${url}`);
 }

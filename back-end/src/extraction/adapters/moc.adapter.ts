@@ -141,8 +141,5 @@ export const mocAdapter: SourceAdapter = {
  */
 async function followFeedForPdfs(ctx: AdapterContext, feedUrl: string) {
   const res = await ctx.http.getText(feedUrl);
-  if (res.insecure) {
-    ctx.logger.warn(`fetched ${res.finalUrl} with TLS verification disabled (broken chain)`);
-  }
   return extractPdfLinks(load(res.body), res.finalUrl, { preferKeywords: DOC_KEYWORDS });
 }

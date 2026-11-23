@@ -1,0 +1,58 @@
+name: Dependency security
+
+on:
+  push:
+    paths:
+      - 'back-end/package.json'
+      - 'back-end/package-lock.json'
+      - 'front-end/package.json'
+      - 'front-end/package-lock.json'
+      - '.github/workflows/dependency-security.yml'
+  pull_request:
+    paths:
+      - 'back-end/package.json'
+      - 'back-end/package-lock.json'
+      - 'front-end/package.json'
+      - 'front-end/package-lock.json'
+      - '.github/workflows/dependency-security.yml'
+  schedule:
+    - cron: '23 3 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    name: Audit ${{ matrix.app }} dependencies
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        app: [back-end, front-end]
+    defaults:
+      run:
+        working-directory: ${{ matrix.app }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: ${{ matrix.app }}/package-lock.json
+      - run: npm ci
+      - run: npm audit --omit=dev --audit-level=high
+
+  sbom:
+    name: Generate ${{ matrix.app }} SBOM
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        app: [back-end, front-end]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: anchore/sbom-action@v0
+        with:
+          path: ${{ matrix.app }}
+          format: cyclonedx-json
+          artifact-name: ${{ matrix.app }}-sbom
+          upload-artifact-retention: 90

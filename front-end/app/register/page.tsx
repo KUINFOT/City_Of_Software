@@ -3,10 +3,11 @@
 import { FormEvent, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { CheckCircle2, CircuitBoard, LockKeyhole } from "lucide-react";
+import { CheckCircle2, Chrome, CircuitBoard, LockKeyhole } from "lucide-react";
 import { SiteHeader } from "@/components/site-header";
 import { useAuth } from "@/components/auth-provider";
 import { blankRegistrationDraft, REGISTRATION_DRAFT_KEY, readRegistrationDraft, RegistrationDraft } from "@/lib/registration-draft";
+import { googleLoginUrl } from "@/lib/auth-api";
 
 export default function RegisterPage() {
   const [draft, setDraft] = useState<RegistrationDraft>(blankRegistrationDraft);
@@ -84,6 +85,10 @@ export default function RegisterPage() {
           <form className="register-form" onSubmit={submit}>
             <h2>สร้างบัญชีของคุณ</h2>
             <p className="form-intro">กรอกข้อมูลเพื่อสร้างบัญชีผู้ให้บริการเทคโนโลยีสำหรับภาครัฐ</p>
+
+            <button className="register-google" type="button" onClick={() => window.location.assign(googleLoginUrl())}><Chrome size={18} /> ดำเนินการต่อด้วย Google</button>
+            <p className="register-google-note">ใช้เพื่อสมัครใหม่ หรือเข้าสู่ระบบด้วยบัญชี Google ที่เชื่อมไว้</p>
+            <div className="register-divider"><span>หรือกรอกข้อมูลด้วยอีเมล</span></div>
 
             <label className="field-label">ฉันสมัครในฐานะ:</label>
             <div className="role-switch" role="group" aria-label="ประเภทบัญชี">

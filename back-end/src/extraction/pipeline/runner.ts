@@ -213,7 +213,6 @@ export async function runSource(
       delayMs: Math.max(extractionConfig.delayMs, options.delayMs ?? sourceDelayMs ?? 0),
       timeoutMs: extractionConfig.timeoutMs,
       maxRetries: extractionConfig.maxRetries,
-      logger,
     }),
     logger,
     today: options.today ?? new Date(),

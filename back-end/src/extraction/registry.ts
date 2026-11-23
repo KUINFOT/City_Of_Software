@@ -123,7 +123,8 @@ const SOURCE_DEFS: Record<SourceId, Omit<SourceDescriptor, 'adapter'>> = {
       'Attachment links leave moc.go.th entirely, redirecting through ilink.thaismart.net to a ' +
         'different agency domain per entry — so PDF extraction is best-effort. An empty ' +
         'attachment list is a prompt to check manually, not necessarily a bug.',
-      'Some hosts in that redirect chain (confirmed: dft.go.th) have broken TLS chains.',
+      'Some hosts in that redirect chain (confirmed: dft.go.th) have broken TLS chains. ' +
+        'The extractor deliberately rejects certificate failures instead of bypassing verification.',
     ],
   },
 

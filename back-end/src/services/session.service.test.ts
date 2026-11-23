@@ -1,6 +1,14 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createSessionToken, readSessionToken } from './session.service';
+import { createSessionId, createSessionToken, readSessionToken } from './session.service';
+
+test('session ids use a 256-bit cryptographically random value', () => {
+  const first = createSessionId();
+  const second = createSessionId();
+
+  assert.match(first, /^[A-Za-z0-9_-]{43}$/);
+  assert.notEqual(first, second);
+});
 
 test('session tokens are signed and contain only the expected session claims', () => {
   const token = createSessionToken({ userId: '507f1f77bcf86cd799439011', role: 'admin', sessionId: 'session-123', sessionVersion: 3 });

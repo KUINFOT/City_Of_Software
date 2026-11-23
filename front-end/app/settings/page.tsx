@@ -1,11 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Plus, Trash2 } from "lucide-react";
+import { Chrome, Plus, Trash2 } from "lucide-react";
 import { AccountShell } from "@/components/account-shell";
 import { useAuth } from "@/components/auth-provider";
 import { getVendorProfile, saveVendorProfile, ProfileCompleteness, VendorProfile } from "@/lib/vendor-profile";
 import { Agency, getAgencies } from "@/lib/agencies-api";
+import { beginGoogleLink, getGoogleLinkStatus } from "@/lib/auth-api";
 
 const initialSearches = [
   { title: "CCTV surveillance & smart computer vision integrations", filter: "BMA Sathon & Pathum Wan Districts only" },
@@ -69,6 +70,10 @@ export default function SettingsPage() {
   const [completeness, setCompleteness] = useState<ProfileCompleteness | null>(null);
   const [agencies, setAgencies] = useState<Agency[]>([]);
   const [activeTab, setActiveTab] = useState<SettingsTab>("account");
+  const [googleLinked, setGoogleLinked] = useState<boolean | null>(null);
+  const [googleLinkBusy, setGoogleLinkBusy] = useState(false);
+  const [googleLinkError, setGoogleLinkError] = useState("");
+  const [googleLinkMessage, setGoogleLinkMessage] = useState("");
 
   useEffect(() => {
     if (!user?.id || !token || user.role !== "vendor") return;
@@ -84,6 +89,28 @@ export default function SettingsPage() {
   }, [token, user?.id, user?.role]);
 
   useEffect(() => { if (user?.role === "vendor") getAgencies().then(setAgencies).catch(() => setAgencies([])); }, [user?.role]);
+
+  useEffect(() => {
+    if (!token) { setGoogleLinked(null); return; }
+    getGoogleLinkStatus(token)
+      .then(({ linked }) => setGoogleLinked(linked))
+      .catch((error) => setGoogleLinkError(error instanceof Error ? error.message : "ไม่สามารถตรวจสอบการเชื่อมต่อ Google ได้"));
+  }, [token]);
+
+  useEffect(() => {
+    const result = new URLSearchParams(window.location.search).get("google");
+    if (!result) return;
+    const messages: Record<string, string> = {
+      linked: "เชื่อมต่อบัญชี Google แล้ว",
+      denied: "ไม่สามารถยืนยันตัวตนกับ Google ได้",
+      expired: "คำขอเชื่อมต่อหมดอายุ โปรดลองอีกครั้ง",
+      conflict: "บัญชี Google นี้เชื่อมต่อกับบัญชีอื่นแล้ว",
+      unavailable: "ยังไม่ได้ตั้งค่า Google sign-in บนเซิร์ฟเวอร์",
+    };
+    setGoogleLinkMessage(messages[result] ?? "ไม่สามารถเชื่อมต่อ Google ได้");
+    if (result === "linked") setGoogleLinked(true);
+    window.history.replaceState(null, "", window.location.pathname);
+  }, []);
 
   useEffect(() => {
     const setTabFromHash = () => {
@@ -148,6 +175,23 @@ export default function SettingsPage() {
     setEditing(true);
   }
 
+  async function connectGoogle() {
+    if (!token) {
+      setGoogleLinkError("เซสชันเข้าสู่ระบบหมดอายุ โปรดเข้าสู่ระบบใหม่");
+      return;
+    }
+    setGoogleLinkBusy(true);
+    setGoogleLinkError("");
+    setGoogleLinkMessage("");
+    try {
+      const { authorizationUrl } = await beginGoogleLink(token);
+      window.location.assign(authorizationUrl);
+    } catch (error) {
+      setGoogleLinkError(error instanceof Error ? error.message : "ไม่สามารถเริ่มเชื่อมต่อ Google ได้");
+      setGoogleLinkBusy(false);
+    }
+  }
+
   function confirmAction() {
     if (!confirmation) return;
     if (confirmation.kind === "save") {
@@ -201,6 +245,13 @@ export default function SettingsPage() {
             <div><small>ชื่อ-นามสกุล</small><strong>{user?.name ?? "—"}</strong></div><div><small>อีเมล</small><strong>{user?.email ?? "—"}</strong></div>
             <div><small>บทบาทบัญชี</small><strong>{roleLabel}</strong></div><div><small>องค์กร</small><strong>{(user?.organization ?? profile.companyName) || "—"}</strong></div>
           </div>
+          <section className="api-placeholder">
+            <h3>Google sign-in</h3>
+            <p>{googleLinked ? "เชื่อมต่อบัญชี Google แล้ว คุณสามารถใช้บัญชีนี้เข้าสู่ระบบได้" : "เชื่อมต่อ Google จาก session ปัจจุบัน เพื่อยืนยันว่าคุณเป็นเจ้าของบัญชีทั้งสองฝั่ง"}</p>
+            {googleLinkMessage && <p role="status">{googleLinkMessage}</p>}
+            {googleLinkError && <p className="register-error" role="alert">{googleLinkError}</p>}
+            {!googleLinked && <button className="button button--secondary" type="button" onClick={connectGoogle} disabled={googleLinkBusy || !token}>{googleLinkBusy ? "กำลังไปยัง Google…" : <><Chrome size={16} /> เชื่อมต่อ Google</>}</button>}
+          </section>
           <p className="profile-footnote">การตั้งค่ารหัสผ่านและความปลอดภัยจัดการได้จากระบบยืนยันตัวตนของบัญชี</p>
         </>}
 

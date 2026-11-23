@@ -16,11 +16,19 @@ export function createVerificationToken(): { token: string; tokenHash: string } 
   return { token, tokenHash: hashVerificationToken(token) };
 }
 
-function verificationUrl(token: string): string {
-  return `${env.publicApiUrl}/auth/verify-email?token=${encodeURIComponent(token)}`;
+export function verificationUrl(token: string): string {
+  const url = new URL('/verify-email', env.appUrl);
+  // Fragments remain in the browser and are not included in HTTP requests,
+  // server access logs, or referrer headers.
+  url.hash = new URLSearchParams({ token }).toString();
+  return url.toString();
 }
 
-function resetUrl(token: string): string { return `${env.appUrl}/reset-password?token=${encodeURIComponent(token)}`; }
+export function resetUrl(token: string): string {
+  const url = new URL('/reset-password', env.appUrl);
+  url.hash = new URLSearchParams({ token }).toString();
+  return url.toString();
+}
 
 async function deliverVerificationEmail(email: string, token: string): Promise<void> {
   const url = verificationUrl(token);

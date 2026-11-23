@@ -11,6 +11,7 @@ export type AuthUser = {
 };
 
 export type AuthSession = { user: AuthUser; token: string };
+export type GoogleOnboardingProfile = { name: string; email: string; avatarUrl: string };
 export type RegistrationResponse = { nextStep: 'vendor_onboarding' | 'verify_email' };
 export type ManagedUser = Omit<AuthUser, 'status'> & { status: 'pending_verification' | 'active' | 'suspended'; emailVerified: boolean; createdAt: string; lastLoginAt: string | null };
 
@@ -21,7 +22,7 @@ type MessageResponse = { message?: string; error?: string };
 
 const apiBaseUrl = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000/api';
 
-async function request(path: string, body: Credentials | Registration): Promise<AuthSession> {
+async function request(path: string, body: unknown): Promise<AuthSession> {
   const response = await fetch(`${apiBaseUrl}${path}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -46,6 +47,50 @@ export function login(credentials: Credentials): Promise<AuthSession> {
   return request('/auth/login', credentials);
 }
 
+export function googleLoginUrl(): string {
+  return `${apiBaseUrl}/auth/google`;
+}
+
+export async function getGoogleLinkStatus(token: string): Promise<{ linked: boolean }> {
+  const response = await fetch(`${apiBaseUrl}/auth/google/link-status`, { headers: { Authorization: `Bearer ${token}` } });
+  const payload = (await response.json().catch(() => null)) as { linked?: boolean; error?: string } | null;
+  if (!response.ok || !payload || typeof payload.linked !== 'boolean') throw new Error(payload?.error ?? 'Unable to read Google connection status.');
+  return { linked: payload.linked };
+}
+
+export async function beginGoogleLink(token: string): Promise<{ authorizationUrl: string }> {
+  const response = await fetch(`${apiBaseUrl}/auth/google/link`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  const payload = (await response.json().catch(() => null)) as { authorizationUrl?: string; error?: string } | null;
+  if (!response.ok || !payload?.authorizationUrl) throw new Error(payload?.error ?? 'Unable to start Google connection.');
+  return { authorizationUrl: payload.authorizationUrl };
+}
+
+export function completeGoogleLogin(token: string): Promise<AuthSession> {
+  return request('/auth/google/complete', { token });
+}
+
+async function googleOnboardingRequest<T>(path: string, token: string, fields?: Record<string, unknown>): Promise<T> {
+  const response = await fetch(`${apiBaseUrl}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token, ...fields }),
+  });
+  const payload = (await response.json().catch(() => null)) as (T & { error?: string }) | null;
+  if (!response.ok || !payload) throw new Error(payload?.error ?? 'Unable to continue Google registration.');
+  return payload;
+}
+
+export function getGoogleOnboarding(token: string): Promise<GoogleOnboardingProfile> {
+  return googleOnboardingRequest('/auth/google/onboarding/details', token);
+}
+
+export function completeGoogleOnboarding(token: string, fields: { name: string; organization: string; phone: string; role: 'vendor' | 'reviewer' }): Promise<AuthSession> {
+  return googleOnboardingRequest<AuthSession>('/auth/google/onboarding', token, fields);
+}
+
 export async function logout(token: string): Promise<void> {
   const response = await fetch(`${apiBaseUrl}/auth/logout`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } });
   if (!response.ok && response.status !== 401) throw new Error('Unable to end the current session.');
@@ -62,6 +107,10 @@ export async function register(input: Registration): Promise<RegistrationRespons
 
 export function resendVerification(email: string): Promise<void> {
   return requestMessage('/auth/resend-verification', { email });
+}
+
+export function verifyEmail(token: string): Promise<void> {
+  return requestMessage('/auth/verify-email', { token, password: '' });
 }
 
 export function requestPasswordReset(email: string): Promise<void> {

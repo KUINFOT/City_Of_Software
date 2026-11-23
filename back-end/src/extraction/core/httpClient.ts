@@ -13,33 +13,17 @@
  *     BMA's old CMS allows crawling its listing pages but disallows the
  *     `/upload/` path its PDFs live under. Checking only page fetches
  *     downloads files the site asked you not to.
- *  4. **Broken TLS chains get a retry, not a crash.** Several `.go.th` hosts
- *     (confirmed: dft.go.th) serve incomplete certificate chains. Since this
- *     is public data behind no login, the fallback re-requests with
- *     verification off rather than dropping the record — and flags that it
- *     did so, so it lands in the job log instead of passing silently.
+ *  4. **Safe public destinations only.** Every URL and every redirect target
+ *     is checked before connecting. Private networks, unsupported schemes,
+ *     credential-bearing URLs, and non-standard ports are rejected.
  */
 
-import https from 'node:https';
-import http from 'node:http';
 import { URL } from 'node:url';
 import { RobotsCache } from './robots';
-import type { Logger } from './logger';
+import { assertSafeExternalUrl } from './urlSafety';
 
 export const DEFAULT_USER_AGENT =
   'city-of-software-procurement-bot/1.0 (+https://github.com/KUINFOT/City_Of_Software; contact via repository owner)';
-
-/** Node surfaces TLS chain problems under these codes. */
-const TLS_ERROR_CODES = new Set([
-  'UNABLE_TO_VERIFY_LEAF_SIGNATURE',
-  'UNABLE_TO_GET_ISSUER_CERT',
-  'UNABLE_TO_GET_ISSUER_CERT_LOCALLY',
-  'SELF_SIGNED_CERT_IN_CHAIN',
-  'DEPTH_ZERO_SELF_SIGNED_CERT',
-  'CERT_HAS_EXPIRED',
-  'ERR_TLS_CERT_ALTNAME_INVALID',
-  'CERT_UNTRUSTED',
-]);
 
 const TRANSIENT_ERROR_CODES = new Set([
   'ECONNRESET',
@@ -69,7 +53,7 @@ export interface HttpResponse<T> {
   finalUrl: string;
   status: number;
   body: T;
-  /** True when the request only succeeded with TLS verification disabled. */
+  /** Retained for historical extraction records. New requests always verify TLS. */
   insecure: boolean;
 }
 
@@ -79,7 +63,6 @@ export interface HttpClientOptions {
   delayMs?: number;
   timeoutMs?: number;
   maxRetries?: number;
-  logger?: Logger;
   /** Only ever set false for a host cleared by other means; see registry.ts. */
   respectRobots?: boolean;
 }
@@ -90,7 +73,6 @@ export class HttpClient {
   private readonly timeoutMs: number;
   private readonly maxRetries: number;
   private readonly respectRobots: boolean;
-  private readonly logger?: Logger;
   private readonly robots: RobotsCache;
   /** host -> tail of that host's request chain, keeping requests serialised. */
   private readonly hostQueues = new Map<string, Promise<unknown>>();
@@ -101,7 +83,6 @@ export class HttpClient {
     this.timeoutMs = options.timeoutMs ?? 30_000;
     this.maxRetries = options.maxRetries ?? 3;
     this.respectRobots = options.respectRobots ?? true;
-    this.logger = options.logger;
     this.robots = new RobotsCache(this.userAgent);
   }
 
@@ -147,13 +128,14 @@ export class HttpClient {
     return this.robots.isAllowed(url);
   }
 
-  private request<T>(
+  private async request<T>(
     url: string,
     init: RequestInit,
     decode: (res: Response) => Promise<T>
   ): Promise<HttpResponse<T>> {
     const host = new URL(url).host;
     const run = async (): Promise<HttpResponse<T>> => {
+      await assertSafeExternalUrl(url);
       await this.gate(url);
       return this.attempt(url, init, decode);
     };
@@ -190,9 +172,8 @@ export class HttpClient {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);
     try {
-      const res = await fetch(url, {
+      const res = await fetchWithSafeRedirects(url, {
         ...init,
-        redirect: 'follow',
         signal: controller.signal,
         headers: {
           'User-Agent': this.userAgent,
@@ -216,19 +197,6 @@ export class HttpClient {
     } catch (err) {
       if (err instanceof HttpStatusError || err instanceof RobotsDisallowedError) throw err;
 
-      if (isTlsChainError(err)) {
-        this.logger?.warn(
-          `TLS chain could not be verified for ${url} — retrying without verification ` +
-            '(public data, no login involved)'
-        );
-        const raw = await insecureGet(url, this.userAgent, this.timeoutMs);
-        return {
-          finalUrl: raw.finalUrl,
-          status: raw.status,
-          body: await decode(toResponseLike(raw)),
-          insecure: true,
-        };
-      }
       if (isTransient(err) && attemptNo <= this.maxRetries) {
         await sleep(backoffMs(attemptNo));
         return this.attempt(url, init, decode, attemptNo + 1);
@@ -251,11 +219,6 @@ export function sleep(ms: number): Promise<void> {
 function errorCode(err: unknown): string | undefined {
   const e = err as { code?: string; cause?: { code?: string } } | undefined;
   return e?.code ?? e?.cause?.code;
-}
-
-function isTlsChainError(err: unknown): boolean {
-  const code = errorCode(err);
-  return code != null && TLS_ERROR_CODES.has(code);
 }
 
 function isTransient(err: unknown): boolean {
@@ -294,84 +257,39 @@ function normalizeCharset(label: string | undefined): string | undefined {
   return label;
 }
 
-interface RawResponse {
-  finalUrl: string;
-  status: number;
-  headers: Record<string, string>;
-  body: Buffer;
-}
+const REDIRECT_STATUS = new Set([301, 302, 303, 307, 308]);
+const MAX_REDIRECTS = 5;
 
-/**
- * GET with certificate verification disabled, following redirects by hand.
- *
- * Only reachable from the TLS-chain fallback above. Built on `node:https` so
- * verification is switched off for exactly one request rather than process
- * wide — never set NODE_TLS_REJECT_UNAUTHORIZED to achieve this.
- */
-function insecureGet(
-  url: string,
-  userAgent: string,
-  timeoutMs: number,
-  redirectsLeft = 5
-): Promise<RawResponse> {
-  return new Promise((resolve, reject) => {
-    const target = new URL(url);
-    const transport = target.protocol === 'http:' ? http : https;
-    const req = transport.request(
-      target,
-      {
-        method: 'GET',
-        headers: { 'User-Agent': userAgent, 'Accept-Language': 'th,en;q=0.8' },
-        rejectUnauthorized: false,
-        timeout: timeoutMs,
-      },
-      (res) => {
-        const status = res.statusCode ?? 0;
-        const location = res.headers.location;
-        if (status >= 300 && status < 400 && location) {
-          res.resume();
-          if (redirectsLeft <= 0) {
-            reject(new Error(`Too many redirects following ${url}`));
-            return;
-          }
-          resolve(
-            insecureGet(
-              new URL(location, target).toString(),
-              userAgent,
-              timeoutMs,
-              redirectsLeft - 1
-            )
-          );
-          return;
-        }
-        const chunks: Buffer[] = [];
-        res.on('data', (chunk: Buffer) => chunks.push(chunk));
-        res.on('end', () => {
-          if (status >= 400) {
-            reject(new HttpStatusError(url, status));
-            return;
-          }
-          resolve({
-            finalUrl: url,
-            status,
-            headers: Object.fromEntries(
-              Object.entries(res.headers).map(([k, v]) => [
-                k,
-                Array.isArray(v) ? v.join(', ') : String(v ?? ''),
-              ])
-            ),
-            body: Buffer.concat(chunks),
-          });
-        });
-      }
-    );
-    req.on('timeout', () => req.destroy(new Error(`Timed out after ${timeoutMs}ms: ${url}`)));
-    req.on('error', reject);
-    req.end();
-  });
-}
+/** Follow redirects ourselves so every destination is validated before fetch. */
+async function fetchWithSafeRedirects(url: string, init: RequestInit): Promise<Response> {
+  let target = url;
+  let method = init.method ?? 'GET';
+  let body = init.body;
+  let headers = new Headers(init.headers);
 
-/** Wrap a raw node:https result so one set of decoders serves both paths. */
-function toResponseLike(raw: RawResponse): Response {
-  return new Response(new Uint8Array(raw.body), { status: raw.status, headers: raw.headers });
+  for (let redirects = 0; ; redirects += 1) {
+    const safeTarget = await assertSafeExternalUrl(target);
+    const response = await fetch(safeTarget, {
+      ...init,
+      method,
+      body,
+      headers,
+      redirect: 'manual',
+    });
+    if (!REDIRECT_STATUS.has(response.status)) return response;
+
+    const location = response.headers.get('location');
+    if (!location) return response;
+    if (redirects >= MAX_REDIRECTS) throw new Error(`Too many redirects following ${url}`);
+
+    target = new URL(location, safeTarget).toString();
+    // Match browser semantics for redirects that do not preserve a request body.
+    if (response.status === 303 || ((response.status === 301 || response.status === 302) && method === 'POST')) {
+      method = 'GET';
+      body = undefined;
+      headers = new Headers(headers);
+      headers.delete('content-type');
+      headers.delete('content-length');
+    }
+  }
 }
