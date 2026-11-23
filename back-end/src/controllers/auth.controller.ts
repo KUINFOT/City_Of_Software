@@ -143,13 +143,13 @@ function createSessionResponse(user: { _id: { toString(): string }; role: string
 }
 
 /** GET /api/auth/google — send the browser to Google without exposing the client secret. */
-export function beginGoogleLogin(req: Request, res: Response): void {
+export async function beginGoogleLogin(req: Request, res: Response): Promise<void> {
   if (!googleOAuthIsConfigured()) {
     logSecurityEvent('auth.google_login_unavailable', req);
     googleLoginRedirect(res, 'unavailable');
     return;
   }
-  res.redirect(302, createGoogleAuthorizationUrl());
+  res.redirect(302, await createGoogleAuthorizationUrl());
 }
 
 /** POST /api/auth/google/link — create a one-use link state for the active app session. */
@@ -184,7 +184,7 @@ export async function beginGoogleLink(req: Request, res: Response): Promise<void
     expiresAt: new Date(Date.now() + 10 * 60_000),
   });
   logSecurityEvent('auth.google_link_started', req, { actorId: authUser.id });
-  res.json({ authorizationUrl: createGoogleAuthorizationUrl(state) });
+  res.json({ authorizationUrl: await createGoogleAuthorizationUrl(state) });
 }
 
 /** GET /api/auth/google/link-status — exposes only whether a provider is connected. */
@@ -205,7 +205,7 @@ export async function completeGoogleCallback(req: Request, res: Response): Promi
   const linkRequest = state
     ? await OAuthAccountLinkModel.findOne({ stateHash: deriveGoogleFlowKey(state), usedAt: null, expiresAt: { $gt: new Date() } }).lean()
     : null;
-  if (readGoogleCallbackValue(req.query.error) || !code || (!linkRequest && !isValidGoogleOAuthState(state))) {
+  if (readGoogleCallbackValue(req.query.error) || !code || (!linkRequest && !(await isValidGoogleOAuthState(state)))) {
     logSecurityEvent('auth.google_login_failed', req, { reason: 'invalid_callback' });
     if (linkRequest) googleLinkRedirect(res, 'denied');
     else googleLoginRedirect(res, 'denied');
