@@ -1,10 +1,60 @@
 # Core Infrastructure & Extraction Pipeline
 
-How pre-award Thai government procurement data gets from six public websites into `tors`, `documents`, and `scrape_jobs` — and, as of Section 13, what happens to it after that: AI extraction, confidence-gated review, cross-record duplicate detection, budget-outlier flags, and scheduled crawling.
+How a government web page becomes a reviewed, searchable TOR: collecting pre-award procurement data from six public websites, reading the documents with AI, holding anything uncertain for a person, and keeping the whole thing polite, repeatable and traceable.
 
-**Sources:** 6 · **Runtime:** Node 18+ / TypeScript · **Location:** `back-end/src/extraction/`, `back-end/src/scheduler/`, `back-end/src/analytics/` · **Companion doc:** [database-design.md](database-design.md)
+**Sources:** 6 registered, 5 running · **Runtime:** Node 22 / TypeScript · **Location:** `back-end/src/extraction/`, `back-end/src/scheduler/`, `back-end/src/analytics/` · **Companion docs:** [database-design.md](database-design.md), [architecture.md](architecture.md), [notifications-and-matching.md](notifications-and-matching.md)
+
+> **The 60-second version**
+>
+> 1. **Collect.** One small adapter per website reads its listing pages and turns each row into a common `RawListing`. A compliance gate and a polite HTTP client stand in front of every request.
+> 2. **Store.** Each listing is upserted into `tors` under a stable identity key, so re-runs never duplicate it, and its PDFs are downloaded once into a content-addressed store.
+> 3. **Read.** A *separate* sweep gives each stored document to Gemini, which returns 16 fields. Every value must be backed by a verbatim quote or it is thrown away, and the confidence is computed in code, never trusted from the model.
+> 4. **Route.** With the shipped settings **every record waits for a person**. Auto-publish exists, and is off.
+> 5. **Keep watching.** Later crawls notice changes, flag likely duplicates and budget outliers, and alert matching vendors.
 
 This is a TypeScript port of the Python research scrapers documented in `PRE_AWARD_PLAYBOOK.md`. The port is deliberate about carrying over the playbook's hard-won behaviours rather than re-deriving them from each site's current markup — those behaviours are called out below wherever they shaped a design decision.
+
+## A listing's journey
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant S as Scheduler, CLI or admin
+    participant R as runner.ts
+    participant A as Site adapter
+    participant DB as MongoDB
+    participant FS as Blob store
+    participant W as AI sweep
+    participant G as Gemini
+    participant H as Admin
+
+    S->>R: runSource("mol")
+    R->>R: compliance gate (Terms of Service)
+    R->>A: collect()
+    A-->>R: RawListing rows (dates converted, stage classified)
+    R->>DB: upsert tors by identityKey (new ones start as discovered)
+    R->>FS: download PDFs (robots.txt-checked), hash, store
+    R->>DB: create documents (status uploaded)
+    Note over R,DB: every NEW tor is compared with the existing corpus for duplicates
+    W->>DB: take the oldest uploaded documents
+    W->>G: send the PDF bytes
+    G-->>W: transcription plus 16 fields with evidence
+    W->>W: ground every value, recompute confidence, decide routing
+    W->>DB: update the tor (pending_review) and write an extractionjob
+    H->>DB: correct, then approve or reject (audited)
+```
+
+## How to read this document
+
+- **Sections 1 to 12** are the collection pipeline: what a source is, how a run works, and what protects it. **Sections 13 and 14** cover everything that happens once a listing is stored: AI extraction, review, duplicates, outliers, scheduling and the TOR detail page. The closing **decision log** collects the lessons learned the hard way.
+- Codes such as `US-038`, `FR-EXT-09` or `BR-03` point at the project's requirements. They are traceability markers; the [glossary](glossary.md#requirement-ids) explains them, and you can read past them.
+- Thai terms and abbreviations (TOR, BMA, BE, direct appointment) are in the [glossary](glossary.md).
+
+| | |
+| --- | --- |
+| **Collect** | [1 Purpose](#1--what-this-pipeline-is-for) · [2 Architecture](#2--architecture) · [3 Modules](#3--module-layout) · [4 Core infrastructure](#4--core-infrastructure) · [5 Registry and compliance](#5--the-source-registry-and-the-compliance-gate) · [6 A run](#6--a-run-phase-by-phase) |
+| **Operate** | [7 Data model](#7--data-model-changes) · [8 Interfaces](#8--interfaces) · [9 Scheduling](#9--scheduling) · [10 Failures](#10--failure-handling) · [11 Status](#11--status-and-next-steps) · [12 Add a source](#12--adding-a-seventh-source) |
+| **After storage** | [13 Review, OCR, scheduling, duplicates, outliers](#13--review-ocr-scheduling-duplicates--outliers) · [14 TOR detail page](#14--tor-detail-page--provenance-qualification-match-key-dates-ep-03) · [Decision log](#decision-log-and-lessons-learned) |
 
 ---
 
@@ -88,10 +138,15 @@ Adding a seventh source is one adapter file plus one registry entry. Nothing els
 | `core/grounding.ts` | FR-EXT-09 grounding check — is a claimed value backed by real source text |
 | `core/duplicateDetection.ts` | Cross-corpus similarity scoring (title trigrams, budget/date proximity) |
 | `core/reviewRouting.ts` | The BR-03/TBD-01 confidence-gated publish decision |
+| `core/confidenceScoring.ts` | The one confidence formula, shared by a document's own extraction and a TOR's cross-document rollup |
+| `core/fieldCoercion.ts` | Parses a raw value into a field's stored shape; shared by the AI sweep and the admin correction form |
+| `core/sourceHealth.ts` | Pure classifier behind the per-source health roll-up (`healthy`, `stale`, `error`, …) |
 | `pipeline/duplicateCheck.ts` | Wires duplicate scoring into `runner.ts`'s persist loop |
 | `pipeline/aiExtraction.ts` | The AI extraction sweep — OCR, structured fields, review routing |
 | `../analytics/outlierMath.ts`, `procurementStats.ts` | IQR-based outlier math and the `ProcurementStat` aggregation |
 | `../scheduler/` | `cronConfig.ts`, `lock.ts`, `index.ts` — cron wiring and overlap protection |
+| `../services/gemini.service.ts`, `documentAI.service.ts` | **Gemini reads the document directly (primary)**; Document AI OCR is the fallback for file types or sizes Gemini cannot take. Both fall back to a zero-confidence stub when `GCP_PROJECT_ID` is empty |
+| `../matching/`, `../notifications/` | Vendor matching and the alert fan-out the runner triggers on a stage change — see [notifications-and-matching.md](notifications-and-matching.md) |
 | `cli.ts` | `npm run extract` (`--source`/`--all`, plus `--extract-ai`/`--analyze-outliers`) |
 
 See [Section 13](#13--review-ocr-scheduling-duplicates--outliers) for how these fit together.
@@ -121,6 +176,7 @@ Not all stage verdicts are worth the same, so every TOR records how its stage wa
 | `authoritative` | The site's own status code | eGP BMA2 only |
 | `doc_type` | A labelled document-type field | ITD, DGA |
 | `title_keyword` | Keyword match on the title | everywhere else |
+| `ai_content` | The AI sweep read the document and found an award or cancellation the title missed | written later, by the sweep (13.3); only ever escalates toward `awarded`/`cancelled` |
 
 A consumer can then weight a `title_keyword` guess differently from a fact. This is playbook step 8 encoded as a stored field rather than left as tribal knowledge.
 
@@ -277,10 +333,6 @@ npm run extract -- --list
 ```
 
 ```bash
-npm test
-```
-
-```bash
 npm run extract -- --source dga --year 2569 --pages 2 --dry-run
 ```
 
@@ -296,7 +348,7 @@ npm run extract -- --extract-ai
 npm run extract -- --analyze-outliers
 ```
 
-`--dry-run` parses and reports without connecting to or writing anything — the right way to check a selector after a site redesign. It needs no `MONGODB_URI` at all. `--extract-ai`/`--analyze-outliers` always need a real Mongo connection — neither has a meaningful dry-run mode.
+`--dry-run` parses and reports without connecting to or writing anything — the right way to check a selector after a site redesign. It never opens a database connection, but `MONGODB_URI` must still be *set* to some value (even a dummy one): the alert code the runner imports pulls in `config/env.ts`, which refuses to load without it (this was not the case when the dry-run mode was first built). `--extract-ai`/`--analyze-outliers` always need a real Mongo connection — neither has a meaningful dry-run mode. A full flag list is in the [back-end README](../back-end/README.md#the-extraction-cli); the test suite is `npm test` (about 200 tests, no database needed).
 
 ### HTTP
 
@@ -315,7 +367,7 @@ npm run extract -- --analyze-outliers
 | `GET /api/documents/:id/file` | The original stored document bytes (Section 13.13) |
 | `GET /api/audit-log` | Every recorded human action, filterable (Section 13.14) |
 
-`POST .../run` is **synchronous today**. A full DEPA pull with attachments takes minutes, so this is the first thing to move behind a queue when the admin UI lands. None of these routes have authentication yet — see Section 13's "still not built" list.
+`POST .../run` is **synchronous today**. A full DEPA pull with attachments takes minutes, so this is the first thing to move behind a queue. **Authentication:** every route under `/api/extraction`, `/api/review` and `/api/audit-log` requires an **admin** token; `GET /api/tors*` is public and returns published records only. The write endpoints still take the acting admin's id in the request body (`actorId`) rather than reading it from the session — see 13.6. The complete route list, with parameters and examples, is in the [API reference](api-reference.md).
 
 ---
 
@@ -331,6 +383,14 @@ Built — see [Section 13.5](#135-scheduler-us-036) for the mechanism. Default c
 | ITD | `0 5 * * *` (daily) | Small listing, labelled doc types. |
 | DEPA | `0 6 * * 1` (weekly) | The whole archive is one page load; new rows are infrequent. |
 | eGP BMA2 | **Never scheduled** | ToS prohibits crawling. Manual, attributed runs only — `schedulableSources()` excludes it unconditionally. |
+
+Three more jobs share the same scheduler and run after the crawls, so each reflects that day's collection:
+
+| Job | Default schedule | Env var | What it does |
+| --- | --- | --- | --- |
+| AI extraction sweep | `*/30 * * * *` (every 30 min) | `CRON_EXTRACTION_SWEEP` | Takes the oldest `uploaded` documents and extracts fields (13.3) |
+| Outlier analysis | `0 7 * * *` (daily) | `CRON_ANALYTICS` | Recomputes budget-outlier flags and `procurementstats` (13.9, [analytics](analytics.md)) |
+| Daily digest | `0 8 * * *` (daily) | `CRON_DIGEST` | Sends each digest-frequency vendor one consolidated email ([notifications](notifications-and-matching.md#instant-or-daily-digest)) |
 
 `runAllSchedulable()` (still called sequentially by the scheduler, not in parallel) runs sources one at a time — each is rate-limited against its own host anyway, so parallelism buys little, and this keeps the outbound pattern boring and keeps one source's failure out of another's job record.
 
@@ -362,7 +422,7 @@ Warnings and errors accumulate on the logger and are written to `ScrapeJob.error
 
 **Built and in this branch:** all six adapters, the core infrastructure, the compliance gate, normalization, dedupe, attachment storage, job records, CLI, HTTP routes, and a regression test suite.
 
-**Verified by execution** — `tsc --noEmit` clean, `npm test` 31/31 passing, and a live dry run against all five schedulable sources:
+**Verified by execution** (the original build, September 2026) — `tsc --noEmit` clean, `npm test` 31/31 passing at that point (the suite has since grown past 200 tests), and a live dry run against all five schedulable sources:
 
 | Source | Live result | Newest announcement |
 |---|---|---|
@@ -399,9 +459,11 @@ Fix 5 also revealed that **MOC publishes a real public-comment window inside its
 **Still not built:**
 
 - A job queue behind the trigger route — `POST /api/extraction/sources/:id/run` is still synchronous
-- Auth on any route — extraction, review, and TOR endpoints all trust the caller; every admin-facing controller has a `// TODO: auth middleware` marker
+- Trustworthy attribution on review actions — the admin routes now require an admin token, but the write endpoints still record an `actorId` taken from the request body rather than from the session (13.6)
 - A lawful BMA adapter (see Section 9's scope-gap note) and the resulting registry/enum updates a 6th real source would need
-- The full repository search/filter/sort API (FR-REP-*) — `GET /api/tors` is intentionally minimal
+- A database-backed scheduler lock, so more than one back-end instance is safe (13.5)
+
+*Since this list was first written:* authentication and roles were added across the admin routes, and the repository search/filter/sort API now exists as `GET /api/documents` (documented in the [API reference](api-reference.md#search)); `GET /api/tors` remains the minimal published list.
 
 ---
 
@@ -433,6 +495,8 @@ discovered → extracting → pending_review → published → closed / supersed
 
 This replaced an earlier 6-value enum (`extracted | pending_review | published | closed | awarded | cancelled`) whose `awarded`/`cancelled` values duplicated a concept `lifecycle.isAwarded`/`lifecycle.stage` already owned correctly — `status` is this platform's own review-workflow state; `lifecycle.stage` is the agency's procurement stage. A freshly-scraped row now starts at `discovered`, not `pending_review` — it hasn't been through extraction yet, and calling it "pending review" before anything has run to review would be a lie.
 
+> **Where things stand today:** the transitions on the left of that diagram are all implemented. `closed` and `archived` are defined in the schema but **nothing sets them yet**: a published TOR whose deadline passes is hidden from the default listings at read time instead, and the analytics treat `published` and `closed` alike as reviewed history. A `superseded` or `rejected` record can only come from `pending_review`.
+
 ### 13.2 Per-field confidence, and the safe-default chain
 
 SRS Section 9.2: "Confidence: Per-field score in [0,1] plus an overall record score." `Tor.extraction.fieldConfidence` is a `Map<fieldKey, number>` keyed by the 16 names in `EXTRACTED_FIELD_KEYS` (`core/fieldSchema.ts`) — the single source of truth for the field vocabulary, reused by the Vertex prompt, the confidence map, and the TOR read endpoint's per-field response. `FIELD_TO_TOR_PATH` in the same file maps each key to its actual storage location on the Tor document (e.g. `budget` → `budget.amountThb`), so the write side (`pipeline/aiExtraction.ts`) and the read side (`controllers/tor.controller.ts`) can never drift apart on where a value lives.
@@ -441,7 +505,7 @@ Every stage in the AI path defaults to zero confidence, not a guess, when it can
 
 - No GCP credentials configured → `gemini.service.ts`'s `extractStructuredFields()` returns every field `null` at confidence `0` (`core/fieldSchema.ts`'s `emptyExtraction()`).
 - A field the model claims but can't back with a verbatim quote from the source text → discarded (`core/grounding.ts`'s `verifyGrounding()`, FR-EXT-09/NFR-DAT-03), never partially trusted.
-- Overall confidence is **recomputed in code**, never taken verbatim from the model: `avg(kept-field confidence) × (keptCount / totalFieldCount)` — so a record that had most fields discarded for lacking grounding can't still claim high confidence off the handful that survived.
+- Overall confidence is **recomputed in code**, never taken verbatim from the model: `avg(confidence of every field found and grounded) × (core fields found / 6)` (`core/confidenceScoring.ts`). The six **core fields** — `title`, `agency`, `procurementMethod`, `description`, `budget`, `timelineSubmissionDeadline` — are the facts nearly every real procurement document states. The other ten are legitimately missing from many documents, so measuring coverage against all sixteen punished normal variation: a live audit on 2026-09-16 found `evaluationCriteria` absent 94% of the time and `keyRisks` 100% of the time in documents that were otherwise read correctly. A record that had most of its core fields discarded for lacking grounding still can't claim high confidence off the handful that survived.
 
 This chain is what makes `core/reviewRouting.ts`'s gate trustworthy: `decideRouting()` requires confidence above **both** a review threshold and a stricter auto-publish threshold, **and** `autoPublishEnabled === true` (default `false`, per the SRS's own open issue TBD-01: *"the conservative default is manual review for every record"*). With shipped defaults, every record routes to `pending_review` — proven in `core/reviewRouting.test.ts`, not just asserted in a comment.
 
@@ -452,15 +516,23 @@ A **separate, independently-scheduled** pass, not a step inside `runSource()`. A
 Two paths, per run:
 
 1. **Docless TORs.** A `discovered` TOR with zero attachments can never legitimately auto-publish (nothing may publish without a traceable source document) — after `EXTRACTION_DOCLESS_GRACE_HOURS` (default 24h, long enough for the same crawl's attachment download to finish), it routes straight to `pending_review` at confidence 0, no `ExtractionJob` created.
-2. **Document-driven extraction.** Batches `Document.status: 'uploaded'` rows, OCRs each (`documentAI.service.ts`), extracts structured fields (`gemini.service.ts`), creates an `ExtractionJob` record (the SRS's distinct per-attempt entity — separate from `ScrapeJob`, which tracks a whole crawl, not one document), routes via `decideRouting()`, and writes results onto the Tor.
+2. **Document-driven extraction.** Batches `Document.status: 'uploaded'` rows (oldest first, up to `EXTRACTION_SWEEP_BATCH_SIZE`), reads each one, creates an `ExtractionJob` record (the SRS's distinct per-attempt entity — separate from `ScrapeJob`, which tracks a whole crawl, not one document), routes via `decideRouting()`, and writes results onto the Tor. **How a document is read:**
+   - **Primary path — Gemini reads it directly.** A PDF, JPEG, PNG or TIFF up to 14 MB goes to Gemini as-is (`extractFromDocument`), which returns a transcription *and* the 16 fields with evidence in one call. Document AI is skipped entirely: it was found (2026-09-15) to reliably produce corrupted text on this project's real documents, so it had nothing useful to add, and skipping it saves an API call. Each field's evidence is grounded against Gemini's own transcription.
+   - **Fallback — OCR, then Gemini on the text.** Anything Gemini cannot take directly (docx/xlsx, or over 14 MB) goes through Document AI OCR (`documentAI.service.ts`) and then `extractStructuredFields` on the OCR text.
 
-**Terminal-state invariant:** the sweep only ever mutates a Tor's `status` if it is currently `discovered` or `extracting`. A Tor already `published`/`rejected`/`superseded` by the time its document is processed is never silently re-queued or unpublished by a slow or duplicate sweep pass — this is what keeps re-extraction idempotent.
+**Terminal-state invariant:** the sweep only writes onto a Tor that is still `discovered`, `extracting` or `pending_review`. (`pending_review` is allowed on purpose: a TOR's second or third document must still be able to refine it while a reviewer has it queued — without that, only the first document ever processed could reach the record.) A Tor already `published`/`rejected`/`superseded` by the time its document is processed is never silently re-queued or unpublished by a slow or duplicate sweep pass — this is what keeps re-extraction idempotent.
 
-**NFR-DAT-06 guard:** any field key present in `Tor.extraction.humanCorrectedFields` is skipped on write, wired ahead of the review-editor feature that will actually populate that array, so a future correction can never be silently clobbered by a re-run.
+**NFR-DAT-06 guard:** any field key present in `Tor.extraction.humanCorrectedFields` is skipped on write. The guard was wired before anything populated that array; since 13.13 the admin correction endpoint does, so a human fix can never be silently clobbered by a re-run.
 
-**Disclosed simplifications:** OCR is invoked uniformly for any non-`text/plain` document (`ocrUsed` records "was the OCR pathway invoked," not "did this document strictly need it" — a true born-digital-PDF skip is a future cost optimisation, not built here); a multi-attachment Tor uses last-successful-document-wins with no cross-document field reconciliation; the model's structured-output schema represents every field value as a string (Gemini's schema support doesn't cleanly express a value union), so array/number/date fields are parsed best-effort from that string downstream.
+**Several documents, one TOR.** A TOR's documents are swept independently, often minutes or days apart, so the sweep merges rather than overwrites. Per field, the **best confidence seen so far wins**, and a document only writes a field it actually produced the winning value for. The overall confidence, and therefore the routing, is recomputed from that merged map, so a TOR whose attachments together cover the core fields is judged on the combined picture. A summary replaces the existing one only if it grounded (confidence above zero) and at least ties the current one, so a bad summary leaves the TOR without one rather than publishing a hallucination.
 
-**Known gap, found by live testing against real credentials (2026-09-14), not yet fixed:** `documentAI.service.ts` calls Document AI's *synchronous* `processDocument` API, which caps out at 30 pages — a real DGA TOR PDF (`TOR-DGA-69-0229.pdf`, 43 pages) failed extraction outright with `Document pages exceed the limit: 30 got 43`. Nothing here falls back to Document AI's asynchronous/batch API (which writes results to GCS and requires polling) for documents over that limit — a TOR whose *only* substantial document is long enough to hit this cap currently fails extraction entirely rather than degrading gracefully, and (per the terminal-state invariant above) sits without a retry path once `EXTRACTION_MAX_ATTEMPTS` is exhausted. Flagged as a known gap, not silently worked around; worth fixing before this pipeline is trusted on agencies whose TORs commonly run long.
+**Dates come from the evidence, not the model's arithmetic.** Grounding proves that the quoted evidence text appears in the source; it does not prove the model parsed it correctly. On 2026-09-16 a document that plainly said "16 September 2569" was stored as the 17th at confidence 1.0, with evidence intact. So the four timeline dates are now re-derived from the grounded evidence text with the same Thai-date parser the scraper trusts (`core/thaiDate.ts`), falling back to the model's value only when the evidence holds no date that parser recognises (for example "within 30 days").
+
+**The sweep can correct the agency's stage.** If the document's own text reads as an award or a cancellation that the scrape-time title keyword missed (live case: two ITD listings titled generically whose attachments were winner disclosures), the TOR's `lifecycle` is escalated to `awarded`/`cancelled` with `signal: ai_content`, and it can no longer auto-publish. It only ever escalates; it never reverses a stage the title already established.
+
+**Disclosed simplifications:** on the OCR fallback path, OCR is invoked uniformly for any non-`text/plain` document (`ocrUsed` records "was the OCR pathway invoked," not "did this document strictly need it" — a true born-digital-PDF skip is a future cost optimisation, not built here); the model's structured-output schema represents every field value as a string (Gemini's schema support doesn't cleanly express a value union), so array/number/date fields are parsed best-effort from that string downstream; and `evaluationCriteria` is stored as one unweighted criterion containing the raw text, because a weight breakdown the source does not give would be fabricated.
+
+**Resolved. This was a known gap, found by live testing against real credentials (2026-09-14):** `documentAI.service.ts` calls Document AI's *synchronous* `processDocument` API, which caps out at 30 pages — a real DGA TOR PDF (`TOR-DGA-69-0229.pdf`, 43 pages) failed extraction outright with `Document pages exceed the limit: 30 got 43`. Nothing here falls back to Document AI's asynchronous/batch API (which writes results to GCS and requires polling) for documents over that limit — a TOR whose *only* substantial document is long enough to hit this cap currently fails extraction entirely rather than degrading gracefully, and (per the terminal-state invariant above) sits without a retry path once `EXTRACTION_MAX_ATTEMPTS` is exhausted. It was flagged rather than silently worked around, and **fixed the next day (2026-09-15)**: a PDF over 30 pages is now split into 30-page chunks, each sent as its own synchronous call and stitched back together in page order with page-weighted confidence (`extractTextInChunks` in `documentAI.service.ts`), which avoids the asynchronous API's Cloud Storage requirement. On the primary path the question no longer arises at all, because Gemini reads PDFs up to 14 MB directly.
 
 ### 13.4 Duplicate detection (`core/duplicateDetection.ts`, `pipeline/duplicateCheck.ts`)
 
@@ -474,15 +546,15 @@ Resolution — turning a `suspected` duplicate into a `confirmed` one — happen
 
 ### 13.5 Scheduler (US-036)
 
-`back-end/src/scheduler/` — `node-cron` (no daemon/broker dependency, appropriate for a single-process deployment). `cronConfig.ts` reads per-job expressions from env (with sane defaults, see Section 9) and validates every one at boot — an invalid expression throws immediately rather than silently never firing. `lock.ts` provides overlapping-run protection (SRS 7.3): an in-memory `Set`, race-free because Node is single-threaded; **flagged, not built** — a multi-instance deployment would need a DB-backed lock instead, since no such infrastructure exists in this repo. `index.ts` wires `runSource()` (per schedulable source), `runExtractionSweep()`, and `runOutlierAnalysis()` onto their schedules, each under its own lock key. Wired into `src/index.ts`, started only after a successful Mongo connection, and only if `SCHEDULER_ENABLED=true` (default `false`).
+`back-end/src/scheduler/` — `node-cron` (no daemon/broker dependency, appropriate for a single-process deployment). `cronConfig.ts` reads per-job expressions from env (with sane defaults, see Section 9) and validates every one at boot — an invalid expression throws immediately rather than silently never firing. `lock.ts` provides overlapping-run protection (SRS 7.3): an in-memory `Set`, race-free because Node is single-threaded; **flagged, not built** — a multi-instance deployment would need a DB-backed lock instead, since no such infrastructure exists in this repo. `index.ts` wires `runSource()` (per schedulable source), `runExtractionSweep()`, `runOutlierAnalysis()` and `runDigestDispatch()` onto their schedules, each under its own lock key. Wired into `src/index.ts`, started only after a successful Mongo connection, and only if `SCHEDULER_ENABLED=true` (default `false`).
 
 ### 13.6 Review-queue API (`controllers/review.controller.ts`, `/api/review/*`)
 
-Minimal, matching FR-ADM-01/03/05/06 only — no full moderation UI, no auth yet (every write endpoint takes `actorId` in the body as a stand-in for real authentication, with a `// TODO` marker). `GET /queue` lists `pending_review` records oldest-first; `POST /queue/:id/approve|reject|supersede` transition a record and write an `AuditLog` entry on every action. `reject` requires a `reason`; `supersede` validates the target isn't itself terminal and sets `duplicateOf`/`duplicateStatus: 'confirmed'` on the *current* record, leaving the target as the sole published survivor.
+Matches FR-ADM-01/03/05/06. Every `/api/review/*` route now requires an **admin** token, and the review queue has a screen (`/admin/review`; `supersede` and manual upload still have none). One loose end remains: every write endpoint takes `actorId` in the request body and the audit trail records *that* value, not the signed-in user's id (a `TODO` in `review.controller.ts`). The web app sends the signed-in admin's own id, so its entries are accurate; a direct API call could name anyone. `GET /queue` lists `pending_review` records oldest-first; `POST /queue/:id/approve|reject|supersede` transition a record and write an `AuditLog` entry on every action. `reject` requires a `reason`; `supersede` validates the target isn't itself terminal and sets `duplicateOf`/`duplicateStatus: 'confirmed'` on the *current* record, leaving the target as the sole published survivor.
 
 ### 13.7 TOR read API (`controllers/tor.controller.ts`, `/api/tors*`)
 
-There was no Tor-facing read endpoint at all before this. `GET /api/tors` lists `published` records only (BR-03 enforced again at the read layer, not just at approve-time — a bug elsewhere can never leak an unpublished record through this path); `GET /api/tors/:id` returns per-field `{value, confidence, caution}` for all 16 `EXTRACTED_FIELD_KEYS` (US-018 — `caution` computed live against the current threshold config, never baked in at write time), a `summaryAi` block always labelled `machineGenerated: true, authoritative: false`, and an `outlier` block that always carries FR-ANL-07's disclaimer string alongside the flag. Deliberately minimal — no search, filter, sort, or pagination beyond a simple limit; the full repository API (FR-REP-*) is a separate epic.
+There was no Tor-facing read endpoint at all before this. `GET /api/tors` lists `published` records only (BR-03 enforced again at the read layer, not just at approve-time — a bug elsewhere can never leak an unpublished record through this path); `GET /api/tors/:id` returns per-field `{value, confidence, caution}` for all 16 `EXTRACTED_FIELD_KEYS` (US-018 — `caution` computed live against the current threshold config, never baked in at write time), a `summaryAi` block always labelled `machineGenerated: true, authoritative: false`, and an `outlier` block that always carries FR-ANL-07's disclaimer string alongside the flag. Deliberately minimal — no filtering or pagination beyond a simple limit, and it also omits records whose submission deadline has passed. Search, filters and sort were built afterwards as `GET /api/documents` (see the [API reference](api-reference.md#search)).
 
 ### 13.8 Verified by live execution against the real Atlas cluster
 
@@ -561,7 +633,7 @@ Three vendor-facing stories, all centered on a TOR detail page (`GET /api/tors/:
 
 FR-REP-04: *"Every published record shall display its agency, source address, capture timestamp and import method, and shall offer retrieval of the original document."* `GET /api/tors/:id` now also returns `source` (`sourceUrl`, `importMethod`, `discoveredAt`) — that's the TOR-level provenance. The document-level half is a new endpoint, `GET /api/tors/:id/documents` (same BR-03 published-only guard as `getTor`), which returns each backing `Document`'s `sourceUrl`/`label`/`capturedAt` plus a **signed, time-limited `fileUrl`**.
 
-The signature reuses `services/session.service.ts`'s exact HMAC-SHA256 + base64url + `timingSafeEqual` construction, in a new sibling `services/documentAccess.service.ts` — same `env.authSecret`, no new secret to provision. It's deliberately not a session token: it authorizes retrieval of one document id for 15 minutes, nothing else, so a link can be handed to a vendor without handing them a signed-in identity. `controllers/document.controller.ts`'s existing `GET /api/documents/:id/file` gained an optional `?token=` check — present-and-invalid is a 403, but **absent is left exactly as it was**, because that same route is also called unauthenticated by the admin document-correction flow (13.13/US-043), which has nothing to send a token with and no auth system yet to gate it either way. A document with no stored bytes (the older `POST /api/documents/upload` path) gets `fileUrl: null` rather than a dead link — SCRUM-16's "handle unavailable original document" subtask.
+The signature reuses `services/session.service.ts`'s exact HMAC-SHA256 + base64url + `timingSafeEqual` construction, in a new sibling `services/documentAccess.service.ts` — same `env.authSecret`, no new secret to provision. It's deliberately not a session token: it authorizes retrieval of one document id for 15 minutes, nothing else, so a link can be handed to a vendor without handing them a signed-in identity. `controllers/document.controller.ts`'s existing `GET /api/documents/:id/file` gained an optional `?token=` check — present-and-invalid is a 403, but **absent is left exactly as it was**, because that same route is also called unauthenticated by the admin document-correction flow (13.13/US-043), which opens the link directly in a browser tab and has no token to send. The route therefore remains reachable without one; see [Status](status.md#security-and-access). A document with no stored bytes (the older `POST /api/documents/upload` path) gets `fileUrl: null` rather than a dead link — SCRUM-16's "handle unavailable original document" subtask.
 
 ### 14.2 Qualification matching (US-017/FR-NOT-02, "Should" priority)
 
@@ -572,6 +644,47 @@ The comparison itself is a new pure module, `matching/qualificationMatch.ts`, ch
 ### 14.3 Key dates with time remaining (US-019/FR-REP-07)
 
 FR-REP-07: *"Key dates shall be shown with the number of days remaining, and any deadline within seven days shall be visually emphasised."* Computed server-side by a new pure module, `analytics/keyDates.ts` (`computeKeyDates`), and returned as `keyDates` on `GET /api/tors/:id` — one entry per timeline field (`announcementDate` through `contractEndDate`), each with `daysRemaining`, `isPast`, and `isUrgent`. Kept presentation-agnostic on purpose: no labels, no language, since Thai/English labelling is a frontend concern and the module is reused by every future page that needs the same dates. The "within seven days" threshold is `extractionConfig.keyDateUrgentWithinDays` (`KEY_DATE_URGENT_WITHIN_DAYS`, default 7) — its own named, env-overridable constant in `extraction/core/config.ts`, following the same pattern as `staleAfterDays` (13.12/US-044) and every other threshold in that file, rather than a number hardcoded into the response builder.
+
+---
+
+## Decision log and lessons learned
+
+Most of what looks odd in this pipeline is there because something went wrong once, against a real website or a real Google account. This is that list, so the next person does not have to rediscover it. Dates are when the finding was made.
+
+### While building the collection side
+
+| Finding | What it would have caused | What was done | See |
+| --- | --- | --- | --- |
+| Python's `robotparser` treats a `robots.txt` with **no** `User-agent` groups as "nothing may be fetched" (DEPA serves exactly that) | A source wrongly shut out | Wrote the rules directly; no groups means allowed | 4.5 |
+| MOL has no per-row URL, so identity fell back to the *paginated* listing URL | 13 of 48 rows changed identity when a page boundary shifted, creating duplicate TORs every run | A synthetic id from title plus comment-window start | 4.7 |
+| Republication grouping keyed on title and date alone | An ITD TOR merged with its price disclosure; the surviving row could be the wrong one | Added stage and document type to the key | 11, bug 4 |
+| MOC's date selector read the block text | The comment-window *end* quoted in a title was taken as the publish date, putting every row in the future | Read the structural `.date` element; a future-dated newest row is now itself a warning | 11, bug 5 |
+| A 200 OK with plausible rows proves nothing about freshness | A dead source looking healthy for months | Every run compares the newest date with today and warns | 6 |
+
+### While wiring the AI, against live credentials
+
+| When | Finding | What was done |
+| --- | --- | --- |
+| 2026-09-14 | A configuration helper treated `0` as "unset", so `EXTRACTION_DOCLESS_GRACE_HOURS=0` silently used 24 | `numAllowZero()`, which only rejects negatives and non-numbers (13.8) |
+| 2026-09-14 | Document AI's default global endpoint fails for any non-`us` processor with "invalid argument" | An explicit regional endpoint (`{location}-documentai.googleapis.com`) |
+| 2026-09-14 | Only `gemini-2.5-flash` was reachable on the project; every lighter or newer name returned "not found or no access" | The default was set to what actually works, with the reasoning for a Lite tier kept (13.10) |
+| 2026-09-14 | Document AI's synchronous call fails on a 43-page TOR (30-page cap) | Fixed 2026-09-15 by chunking (13.3) |
+| 2026-09-15 | Document AI produced corrupted Thai text on this project's real documents | Gemini reading the document directly became the **primary path** |
+| 2026-09-15 | A summary confidently described an unrelated water-distribution project's budget and deadline, numbers that appeared nowhere in the source, on a Ministry of Labour computer-equipment TOR | The summary must now ground like any field; an ungrounded one is dropped rather than published |
+| Sept. 2026 | A TOR's second and third documents ran (and were paid for) and then had their results discarded, because the write guard excluded `pending_review` | The guard allows `pending_review`, and fields now merge across documents by best confidence |
+| 2026-09-16 | Scoring coverage against all 16 fields capped every record's confidence; `keyRisks` was absent in 100% of documents that were otherwise read correctly | Coverage is measured against six core fields (13.2) |
+| 2026-09-16 | A deadline of "16 September" was stored as the 17th at confidence 1.0, with valid evidence | Dates are re-derived from the grounded evidence with the deterministic Thai-date parser (13.3) |
+| 2026-09-16 | Two generically titled ITD listings were winner disclosures | The sweep escalates a stage when the document text reads as an award or cancellation (`ai_content`) |
+| 2026-09-16 | A 44-page TOR needs roughly 37,500 output tokens; riding the SDK default risked truncated JSON | Maximum output tokens is set to the model's own ceiling |
+| 2026-09-16 | Unattended crawling plus the sweep can run into hundreds of billable documents | `EXTRACTION_MAX_DOCUMENTS`, a temporary hard ceiling for development |
+
+### What the log keeps proving
+
+1. **Test against the real thing.** Almost every bug above was silent: wrong data, not an error. Recorded-corpus replays and live runs found them; unit tests alone would not have.
+2. **Make "unknown" a first-class value.** `null` is not `false`, and an absent budget is not `0`. Every shortcut that collapsed them eventually showed a wrong thing to a vendor.
+3. **Do not trust a model's arithmetic, its summary, or its own confidence.** Ground every claim in the source, recompute scores in code, and parse dates deterministically.
+4. **Fail safe, and say so.** No credentials means zero confidence and human review. A refused run is `skipped`, not `failed`. Disclose simplifications rather than hide them.
+5. **Write down the live-API fact, not just the decision.** "The model name 404s on this project" is a fact about the world that can change; the code and docs record it as such so it can be rechecked.
 
 ---
 

@@ -1,144 +1,159 @@
-# City_Of_Software
+# City of Software
 
-A document-intelligence application: upload documents, run OCR / text extraction, and
-generate AI summaries.
+**Find Bangkok's software tenders while there is still time to act on them.**
 
-## Tech stack
+[![CI](https://github.com/KUINFOT/City_Of_Software/actions/workflows/ci.yml/badge.svg)](https://github.com/KUINFOT/City_Of_Software/actions/workflows/ci.yml)
 
-| Layer                     | Technology                                                        |
-| ------------------------- | ----------------------------------------------------------------- |
-| Frontend                  | Next.js · React · TypeScript                                       |
-| Backend / API             | Node.js · Express · TypeScript                                    |
-| Database                  | MongoDB Atlas (Mongoose)                                           |
-| AI / Document Intelligence| Vertex AI (Google Cloud) — Document AI (OCR/extraction) + Gemini summaries |
+City of Software (the *BMA TOR Portal*) is a discovery and alert platform for software procurement by Thai government agencies. It watches agency websites for new draft TORs and tender announcements, reads the PDFs with AI, has a person check the result, and then tells the vendors who could actually bid.
 
-## Structure
+> **New to the vocabulary?** A **TOR** is a *Terms of Reference*: the document an agency publishes to say what it wants built. The [glossary](docs/glossary.md) explains the rest (BMA, e-GP, Buddhist Era dates, "pre-award", and so on).
+
+## Why it exists
+
+Awarded-contract data is easy to find, and it is useless to a vendor looking for work: the contract is already signed.
+
+The opportunities live earlier. A *draft TOR* is open for public comment, or a tender has just opened for bids. That information sits on individual agency websites, in inconsistent formats, often as scanned PDFs, and most of it is only actionable for a few days. Nobody checks six government sites every morning.
+
+City of Software does that for you, puts the result in one searchable place, and puts the deadline on top.
+
+## What you can do with it
+
+### As a vendor
+
+- **Search and browse** every reviewed TOR by keyword, agency, budget, status, deadline, technology and project type. A search is just a URL, so you can bookmark it or send it to a colleague.
+- **Read a standardised summary** next to the original document, with a warning on any field the AI was not sure about.
+- **Check yourself against the requirements.** Your declared certifications, past contract value and years of experience are compared with the TOR's stated thresholds. The platform never says "eligible" or "ineligible"; that decision belongs to the agency.
+- **Get alerts** when a TOR that matches you opens for public comment, and again when it is formally announced. Choose instant emails or a daily digest, follow extra agencies and keywords, and unsubscribe in one click.
+- **Keep a shortlist.** Save TORs with private notes, compare two to four side by side, plan around a deadline calendar, and print or save a summary as PDF.
+- **Price a bid with evidence.** See historical budgets for comparable projects, how often each agency buys software and at what size, and which postings look statistically unusual.
+
+### As an administrator
+
+- **Review before anything is published.** Every extracted TOR waits in a queue with its original document beside it. Correct a field, approve, reject with a reason, or resolve a duplicate. Auto-publish exists but is **off by default**.
+- **Watch the crawlers.** See which agency sites are healthy, stale or broken, and trigger a run by hand.
+- **Control access.** Manage accounts and roles, and read an audit log of every human decision.
+
+## How it works
+
+```mermaid
+flowchart LR
+    A["Agency websites<br/>DGA · MOL · MOC · ITD · DEPA"] -->|"polite crawl"| B["Collect<br/>listings + PDFs"]
+    B --> C["Extract<br/>OCR + Gemini → 16 fields,<br/>each with a confidence"]
+    C --> D{"Auto-publish on<br/>and confident?"}
+    D -->|"no (the default)"| E["Human review<br/>correct · approve · reject"]
+    D -->|yes| F
+    E --> F["Published TOR"]
+    F --> G["Search · detail page<br/>analytics"]
+    F --> H["Match vendors → alerts<br/>email · in-app"]
+```
+
+1. **Collect.** Per-site adapters read the listing pages politely (rate-limited, `robots.txt`-aware) and download the attached PDFs.
+2. **Extract.** Gemini reads each document and returns structured fields, and every value must be backed by a quote from the source or it is thrown away. Anything unsure gets a low confidence.
+3. **Review.** A person checks the result, because nobody should act on a bad reading of a scanned page.
+4. **Publish and notify.** Only approved records are visible to vendors. When a published TOR moves to a new stage, matching vendors are alerted.
+
+The full tour is in [docs/architecture.md](docs/architecture.md).
+
+## Status at a glance
+
+| Area | Where it stands |
+| --- | --- |
+| Accounts, vendor profiles, sign-in | ✅ Built. Sign-up and password-reset emails need Gmail or Resend credentials; without them the link is printed in the API's terminal. |
+| Search, browse, TOR detail | ✅ Built, on reviewed (published) TORs. |
+| Saved TORs, notes, compare, calendar | ✅ Built. |
+| Pricing analytics | ✅ Built. Reports "not enough data" until a comparable set has at least 5 records. |
+| Crawling | ✅ Five sources work. A sixth (eGP BMA2) is blocked by its Terms of Service. The daily schedule is **off** until you set `SCHEDULER_ENABLED=true`. |
+| AI extraction | ✅ Built. Needs Google Cloud credentials; without them the API runs on safe stubs and sends every record to manual review. |
+| Alerts | ⚙️ Built, but needs email credentials and is triggered by crawls ([details](docs/notifications-and-matching.md#when-an-alert-is-sent)). |
+| Admin tools | ✅ Review queue, field correction, adapter health, accounts and roles, audit log. ⚠️ Manual TOR upload has no screen yet (API only), and "Export repository" is a demo that downloads sample data. |
+
+The honest, itemised version, including known gaps, is in [docs/status.md](docs/status.md).
+
+## Quick start
+
+You need **Node.js 22 or newer** and a **MongoDB connection string** (a free [MongoDB Atlas](https://www.mongodb.com/atlas) cluster is plenty).
+
+```bash
+# 1. The API
+cd back-end
+npm install
+cp .env.example .env        # then set MONGODB_URI in .env
+npm run dev                 # http://localhost:4000/api/health
+```
+
+```bash
+# 2. The web app (in a second terminal)
+cd front-end
+npm install
+npm run dev                 # http://localhost:3000
+```
+
+Everything else is optional for local work. With no Google Cloud credentials the AI steps use stubs, and with no email credentials the verification link is printed in the API terminal instead of being sent.
+
+> **An empty database shows an empty site.** [Getting started](docs/getting-started.md) walks through pulling in real TORs, creating your first admin, and approving something so you have data to look at.
+
+### Or run it all with Docker
+
+```bash
+cp .env.example .env        # fill in MONGODB_URI and AUTH_SECRET
+docker compose up --build -d
+```
+
+Open <http://localhost:3000>. The [deployment guide](docs/deployment.md) covers configuration, the scheduler, backups and updating.
+
+## Repository map
 
 ```
 City_Of_Software/
-├── back-end/    Express + TypeScript API — see back-end/README.md
-└── front-end/   Next.js frontend — landing, browse TORs, registration, dashboard, settings
+├── back-end/              Express + TypeScript API, crawler, AI extraction, scheduler
+│   └── src/
+│       ├── routes/ controllers/ middleware/ models/   the HTTP layer and the data model
+│       ├── extraction/    site adapters and the crawl → extract → review pipeline
+│       ├── analytics/     pricing analytics, outlier maths, key dates
+│       ├── matching/      qualification check and "why did this match me"
+│       ├── notifications/ alert fan-out, daily digest, email templates
+│       ├── scheduler/     cron wiring and the overlap lock
+│       └── services/      sessions, passwords, email, Document AI, Gemini
+├── front-end/             Next.js app with a Thai-language UI
+├── docs/                  the documentation index is docs/README.md
+├── docker-compose.yml     the whole stack in one command
+└── .github/workflows/     CI: type-check, tests, build, Docker health check
 ```
 
-## Getting started (back-end)
+## Documentation
 
-```bash
-cd back-end
-npm install
-cp .env.example .env   # add your MongoDB Atlas connection string
-npm run dev
-```
-
-Full details and API reference: [back-end/README.md](back-end/README.md).
-
-> **Note:** The Vertex AI / Document AI integration is currently stubbed — the API runs
-> and returns placeholder AI output without Google Cloud credentials. See the back-end
-> README for how to wire up the real calls.
-
-## Getting started (front-end)
-
-The frontend currently uses local mock data and does not call the backend.
-
-```bash
-cd front-end
-npm install
-npm run dev
-```
-
-Then open [http://localhost:3000](http://localhost:3000) in a browser.
-
-Available pages:
-
-| Page | URL |
+| I want to… | Read |
 | --- | --- |
-| Landing page | `http://localhost:3000/` |
-| Browse TORs | `http://localhost:3000/browse-tors` |
-| Registration | `http://localhost:3000/register` |
-| Vendor dashboard | `http://localhost:3000/dashboard` |
-| Account settings | `http://localhost:3000/settings` |
+| Get it running and see real data | [Getting started](docs/getting-started.md) |
+| Use it as a vendor | [Vendor guide](docs/guides/vendor-guide.md) |
+| Run the admin side | [Admin guide](docs/guides/admin-guide.md) |
+| Understand how the pieces fit | [Architecture](docs/architecture.md) |
+| Call the API | [API reference](docs/api-reference.md) |
+| See every setting | [Configuration](docs/configuration.md) |
+| Deploy it | [Deployment](docs/deployment.md) |
+| Work on the code | [Development guide](docs/development.md) |
+| Fix something that is broken | [Troubleshooting](docs/troubleshooting.md) |
+| Look up a term | [Glossary](docs/glossary.md) |
 
-To verify or run a production build:
+The deeper design documents are [Authentication](docs/authentication.md), [Notifications and matching](docs/notifications-and-matching.md), [Analytics](docs/analytics.md), [Extraction pipeline](docs/extraction-pipeline.md) and [Database design](docs/database-design.md). Per-package notes live in [back-end/README.md](back-end/README.md) and [front-end/README.md](front-end/README.md).
 
-```bash
-cd front-end
-npm run typecheck
-npm run build
-npm run start
-```
+## Tech stack
 
-More frontend details are available in [front-end/README.md](front-end/README.md).
-
-## Deployment with Docker
-
-`docker-compose.yml` runs the back-end API and the front-end together. Each has a
-multi-stage `Dockerfile` (`back-end/Dockerfile`, `front-end/Dockerfile`) that builds on
-Node 22 and runs as the non-root `node` user. MongoDB is not part of the stack: the API
-connects to MongoDB Atlas through `MONGODB_URI`, so the Atlas network access list must
-allow the server's IP address.
-
-You need Docker with Compose v2.24 or newer.
-
-### 1. Configure
-
-```bash
-cp .env.example .env
-```
-
-Fill in `.env`. It is git-ignored, and the `.dockerignore` files keep it, `service-account.json`,
-`node_modules` and `storage/` out of every image: secrets reach the containers at run time only.
-
-| Setting | What it is |
+| Layer | Technology |
 | --- | --- |
-| `MONGODB_URI` | MongoDB Atlas connection string. **Required.** |
-| `AUTH_SECRET` | Long random string that signs sessions and email links (`openssl rand -base64 48`). **Required**: the API will not start in production without it. |
-| `CORS_ORIGIN`, `APP_URL`, `PUBLIC_API_URL` | The URLs the stack is served from. `PUBLIC_API_URL` is where a **browser** reaches the API, including `/api`. It is built into the front-end, so after changing it run `docker compose up --build`. Use HTTPS URLs on a real deployment: the links in emails are built from them. |
-| `GMAIL_USER` and `GMAIL_APP_PASSWORD`, or `RESEND_API_KEY` and `EMAIL_FROM` | Email delivery. Sign-up and password reset need one of them in production. |
-| `GCP_PROJECT_ID`, `GCP_LOCATION`, `DOC_AI_PROCESSOR_ID`, `VERTEX_AI_*` | Google Cloud. Optional: with `GCP_PROJECT_ID` empty, every AI call uses the built-in stub and sends the record to manual review. |
-| `SCHEDULER_ENABLED` | `false` unless you set it to `true`. See below. |
+| Front-end | Next.js 15 (App Router) · React 19 · TypeScript · Lucide icons |
+| Back-end | Node.js 22 · Express 4 · TypeScript · Mongoose 9 |
+| Database | MongoDB Atlas |
+| AI | Google Cloud Document AI (OCR fallback) · Gemini via the `@google/genai` SDK |
+| Crawling | `cheerio` · `node-cron` · per-site adapters |
+| Email | Gmail SMTP (`nodemailer`) or Resend |
+| Packaging | Docker (multi-stage, non-root) · Docker Compose |
 
-Put the Google Cloud service account key at `secrets/service-account.json` (git-ignored). It is
-mounted read-only into the back-end and must be readable by user ID 1000.
-
-Any other back-end setting from [back-end/.env.example](back-end/.env.example) (`EXTRACTION_*`,
-`CRON_*`, ...) can be added to `.env` and is passed through to the back-end.
-
-### 2. Build and start
+## Tests and CI
 
 ```bash
-docker compose up --build -d
-docker compose ps
+cd back-end  && npm run typecheck && npm test            # 200+ unit tests in about 5 seconds
+cd front-end && npm run typecheck && npm run build
 ```
 
-Both services report `healthy` within about a minute. The web app is at
-[http://localhost:3000](http://localhost:3000) and the API's health check at
-[http://localhost:4000/api/health](http://localhost:4000/api/health) (change the ports with
-`FRONTEND_PORT` and `BACKEND_PORT`).
-
-### 3. Update
-
-```bash
-git pull
-docker compose up --build -d
-```
-
-### Running it for real
-
-- **The daily collection is off by default.** Set `SCHEDULER_ENABLED=true` in `.env` on the
-  deployed environment only. The cron expressions are read in `APP_TIMEZONE` (`Asia/Bangkok`
-  by default).
-- **Run exactly one back-end.** The scheduler's overlap lock lives in memory, so a second
-  instance would repeat every crawl. Scaling out needs a database-backed lock first (see
-  [docs/extraction-pipeline.md](docs/extraction-pipeline.md)).
-- **Downloaded PDFs** are written to `EXTRACTION_STORAGE_DIR`, which is the `tor-storage` Docker
-  volume mounted at `/data/storage`. Restarting, rebuilding and `docker compose down` keep it;
-  `docker compose down -v` deletes it. For now the files stay on that volume rather than in
-  object storage, so back the volume up with the rest of the server.
-- **The extraction CLI** runs inside the deployed container, for example
-  `docker compose exec back-end node dist/extraction/cli.js --list`.
-- Put a TLS-terminating reverse proxy in front of the app before public release. It must redirect
-  browser HTTP traffic to HTTPS, keep the API port inaccessible from the public internet, and set
-  `TRUST_PROXY_HOPS=1` on the API only when it is the one trusted proxy immediately upstream.
-  Keep the value at `0` for local/direct access. The API already emits HSTS, CSP and related
-  headers, but a TLS certificate and reverse-proxy network isolation are deployment requirements.
-
-CI builds both images on every pull request and checks that the stack starts and reports healthy.
+The back-end tests need no database and no Google account. CI runs the same checks on every pull request and also builds both Docker images and waits for them to report healthy. More in the [development guide](docs/development.md).
