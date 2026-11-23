@@ -563,7 +563,7 @@ export async function logout(req: Request, res: Response): Promise<void> {
   const session = token ? readSessionToken(token) : null;
   if (session) {
     await SessionModel.updateOne(
-      { userId: session.sub, sessionId: session.sid, revokedAt: null },
+      { userId: { $eq: session.sub }, sessionId: { $eq: session.sid }, revokedAt: null },
       { $set: { revokedAt: new Date() } }
     );
   }

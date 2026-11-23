@@ -418,14 +418,18 @@ export async function supersedeRecord(req: Request, res: Response, next: NextFun
       res.status(400).json({ error: 'targetTorId is required' });
       return;
     }
+    if (!Types.ObjectId.isValid(req.params.id) || !Types.ObjectId.isValid(targetTorId)) {
+      res.status(400).json({ error: 'TOR ids must be valid ObjectIds' });
+      return;
+    }
     if (targetTorId === req.params.id) {
       res.status(400).json({ error: 'A record cannot supersede itself' });
       return;
     }
 
     const [record, target] = await Promise.all([
-      TorModel.findById(req.params.id),
-      TorModel.findById(targetTorId).select('status').lean(),
+      TorModel.findOne({ _id: { $eq: req.params.id } }),
+      TorModel.findOne({ _id: { $eq: targetTorId } }).select('status').lean(),
     ]);
     if (!record) {
       res.status(404).json({ error: 'Record not found' });

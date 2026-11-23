@@ -24,13 +24,13 @@ async function authenticate(req: Request): Promise<AuthUser | null> {
 
   const now = new Date();
   const activeSession = await SessionModel.findOneAndUpdate(
-    { userId: session.sub, sessionId: session.sid, revokedAt: null, expiresAt: { $gt: now } },
+    { userId: { $eq: session.sub }, sessionId: { $eq: session.sid }, revokedAt: null, expiresAt: { $gt: now } },
     { $set: { lastActivityAt: now, expiresAt: sessionIdleExpiresAt(now) } },
     { new: true }
   );
   if (!activeSession) return null;
 
-  const user = await UserModel.findById(session.sub).select('name role status sessionVersion');
+  const user = await UserModel.findOne({ _id: { $eq: session.sub } }).select('name role status sessionVersion');
   if (!user || user.status !== 'active' || user.sessionVersion !== session.sv || !['vendor', 'reviewer', 'admin'].includes(user.role)) return null;
   return { id: user._id.toString(), name: user.name, role: user.role as AuthUser['role'] };
 }
