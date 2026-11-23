@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { webcrypto } from 'node:crypto';
 
 const RANGE_URL = 'https://api.pwnedpasswords.com/range/';
 const REQUEST_TIMEOUT_MS = 5_000;
@@ -7,8 +7,10 @@ type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 
 export type PasswordScreeningResult = 'accepted' | 'rejected' | 'unavailable';
 
-function sha1(password: string): string {
-  return createHash('sha1').update(password, 'utf8').digest('hex').toUpperCase();
+async function hibpRangeDigest(value: string): Promise<string> {
+  const bytes = new TextEncoder().encode(value);
+  const digest = await webcrypto.subtle.digest('SHA-1', bytes);
+  return Buffer.from(digest).toString('hex').toUpperCase();
 }
 
 /**
@@ -17,7 +19,7 @@ function sha1(password: string): string {
  * intentionally an error rather than evidence that a password is safe.
  */
 export async function isPasswordBreached(password: string, fetchImpl: FetchLike = fetch): Promise<boolean> {
-  const digest = sha1(password);
+  const digest = await hibpRangeDigest(password);
   const prefix = digest.slice(0, 5);
   const suffix = digest.slice(5);
   const response = await fetchImpl(`${RANGE_URL}${prefix}`, {

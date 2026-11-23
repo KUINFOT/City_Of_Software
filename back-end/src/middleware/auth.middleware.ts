@@ -7,12 +7,18 @@ import { logSecurityEvent } from './securityLog';
 export type AuthenticatedRequest = Request & { authUser: { id: string; role: 'vendor' | 'reviewer' | 'admin'; name: string } };
 type AuthUser = AuthenticatedRequest['authUser'];
 
+function readBearerToken(header: string | undefined): string | null {
+  if (!header || header.length <= 7 || header.slice(0, 7).toLowerCase() !== 'bearer ') return null;
+  const token = header.slice(7).trim();
+  return token || null;
+}
+
 /**
  * Validates the signed token, server-side idle session, and current account
  * state. A role/status change or logout therefore takes effect immediately.
  */
 async function authenticate(req: Request): Promise<AuthUser | null> {
-  const token = req.header('authorization')?.match(/^Bearer\s+(.+)$/i)?.[1];
+  const token = readBearerToken(req.header('authorization'));
   const session = token ? readSessionToken(token) : null;
   if (!session) return null;
 

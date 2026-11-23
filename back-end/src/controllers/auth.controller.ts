@@ -17,7 +17,7 @@ import { PendingRegistration, readPendingRegistrationToken } from '../services/p
 import { buildVendorProfileUpdate, upsertVendorProfile } from './vendorProfile.controller';
 import { logSecurityEvent } from '../middleware/securityLog';
 import { createGoogleAuthorizationUrl, googleOAuthIsConfigured, isValidGoogleOAuthState, readGoogleIdentity } from '../services/google-oauth.service';
-import { createHash, randomBytes } from 'node:crypto';
+import { createHmac, randomBytes } from 'node:crypto';
 import type { AuthenticatedRequest } from '../middleware/auth.middleware';
 
 const REGISTERABLE_ROLES = new Set(['vendor', 'reviewer']);
@@ -36,7 +36,13 @@ function normalizeEmail(value: unknown): string {
 }
 
 function isEmail(value: string): boolean {
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+  if (value.length > 254 || value.includes(' ')) return false;
+  const at = value.indexOf('@');
+  if (at < 1 || at !== value.lastIndexOf('@')) return false;
+  const local = value.slice(0, at);
+  const domain = value.slice(at + 1);
+  const dot = domain.lastIndexOf('.');
+  return Boolean(local) && dot > 0 && dot < domain.length - 1 && !domain.startsWith('.') && !domain.endsWith('.');
 }
 
 async function passwordScreeningError(password: string): Promise<{ status: 400 | 503; error: string } | null> {
@@ -85,12 +91,19 @@ function publicUser(user: { _id: { toString(): string }; name: string; email: st
   };
 }
 
-function readOAuthValue(value: unknown): string {
+function readGoogleCallbackValue(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
 }
 
-function hashOAuthLoginToken(token: string): string {
-  return createHash('sha256').update(token).digest('hex');
+/** A keyed lookup digest for high-entropy, short-lived Google flow values. */
+function deriveGoogleFlowKey(value: string): string {
+  return createHmac('sha256', env.authSecret).update(value).digest('hex');
+}
+
+function readBearerToken(header: string | undefined): string | null {
+  if (!header || header.length <= 7 || header.slice(0, 7).toLowerCase() !== 'bearer ') return null;
+  const token = header.slice(7).trim();
+  return token || null;
 }
 
 function googleLoginRedirect(res: Response, result: 'denied' | 'invalid' | 'unavailable' | 'not_registered' | 'link_required'): void {
@@ -146,7 +159,7 @@ export async function beginGoogleLink(req: Request, res: Response): Promise<void
     return;
   }
   const authUser = (req as AuthenticatedRequest).authUser;
-  const bearer = req.header('authorization')?.match(/^Bearer\s+(.+)$/i)?.[1];
+  const bearer = readBearerToken(req.header('authorization'));
   const session = bearer ? readSessionToken(bearer) : null;
   if (!session || session.sub !== authUser.id) {
     res.status(401).json({ error: 'Please sign in again before connecting Google.' });
@@ -164,7 +177,7 @@ export async function beginGoogleLink(req: Request, res: Response): Promise<void
 
   const state = randomBytes(32).toString('base64url');
   await OAuthAccountLinkModel.create({
-    stateHash: hashOAuthLoginToken(state),
+    stateHash: deriveGoogleFlowKey(state),
     userId: user._id,
     sessionId: session.sid,
     sessionVersion: user.sessionVersion,
@@ -187,12 +200,12 @@ export async function completeGoogleCallback(req: Request, res: Response): Promi
     googleLoginRedirect(res, 'unavailable');
     return;
   }
-  const state = readOAuthValue(req.query.state);
-  const code = readOAuthValue(req.query.code);
+  const state = readGoogleCallbackValue(req.query.state);
+  const code = readGoogleCallbackValue(req.query.code);
   const linkRequest = state
-    ? await OAuthAccountLinkModel.findOne({ stateHash: hashOAuthLoginToken(state), usedAt: null, expiresAt: { $gt: new Date() } }).lean()
+    ? await OAuthAccountLinkModel.findOne({ stateHash: deriveGoogleFlowKey(state), usedAt: null, expiresAt: { $gt: new Date() } }).lean()
     : null;
-  if (readOAuthValue(req.query.error) || !code || (!linkRequest && !isValidGoogleOAuthState(state))) {
+  if (readGoogleCallbackValue(req.query.error) || !code || (!linkRequest && !isValidGoogleOAuthState(state))) {
     logSecurityEvent('auth.google_login_failed', req, { reason: 'invalid_callback' });
     if (linkRequest) googleLinkRedirect(res, 'denied');
     else googleLoginRedirect(res, 'denied');
@@ -253,7 +266,7 @@ export async function completeGoogleCallback(req: Request, res: Response): Promi
     }
     const onboardingToken = randomBytes(32).toString('base64url');
     await OAuthOnboardingModel.create({
-      tokenHash: hashOAuthLoginToken(onboardingToken),
+      tokenHash: deriveGoogleFlowKey(onboardingToken),
       googleSubject: identity.subject,
       email: identity.email,
       name: identity.name,
@@ -277,7 +290,7 @@ export async function completeGoogleCallback(req: Request, res: Response): Promi
 
   const handoffToken = randomBytes(32).toString('base64url');
   await OAuthLoginModel.create({
-    tokenHash: hashOAuthLoginToken(handoffToken),
+    tokenHash: deriveGoogleFlowKey(handoffToken),
     userId: user._id,
     expiresAt: new Date(Date.now() + 60_000),
   });
@@ -289,13 +302,13 @@ export async function completeGoogleCallback(req: Request, res: Response): Promi
 
 /** POST /api/auth/google/complete — exchange the one-time OAuth handoff for an app session. */
 export async function completeGoogleLogin(req: Request, res: Response): Promise<void> {
-  const handoffToken = readOAuthValue(req.body?.token);
+  const handoffToken = readGoogleCallbackValue(req.body?.token);
   if (!handoffToken) {
     res.status(400).json({ error: 'The Google sign-in request is invalid or has expired.' });
     return;
   }
   const handoff = await OAuthLoginModel.findOneAndUpdate(
-    { tokenHash: hashOAuthLoginToken(handoffToken), usedAt: null, expiresAt: { $gt: new Date() } },
+    { tokenHash: deriveGoogleFlowKey(handoffToken), usedAt: null, expiresAt: { $gt: new Date() } },
     { $set: { usedAt: new Date() } },
     { new: true }
   );
@@ -317,9 +330,9 @@ export async function completeGoogleLogin(req: Request, res: Response): Promise<
 
 /** Reads verified claims without consuming the one-time registration capability. */
 export async function getGoogleOnboardingDetails(req: Request, res: Response): Promise<void> {
-  const onboardingToken = readOAuthValue(req.body?.token);
+  const onboardingToken = readGoogleCallbackValue(req.body?.token);
   const onboarding = onboardingToken
-    ? await OAuthOnboardingModel.findOne({ tokenHash: hashOAuthLoginToken(onboardingToken), usedAt: null, expiresAt: { $gt: new Date() } }).lean()
+    ? await OAuthOnboardingModel.findOne({ tokenHash: deriveGoogleFlowKey(onboardingToken), usedAt: null, expiresAt: { $gt: new Date() } }).lean()
     : null;
   if (!onboarding) {
     res.status(400).json({ error: 'The Google registration request is invalid or has expired.' });
@@ -330,14 +343,14 @@ export async function getGoogleOnboardingDetails(req: Request, res: Response): P
 
 /** Completes app-specific profile fields for a verified Google identity. */
 export async function completeGoogleOnboarding(req: Request, res: Response): Promise<void> {
-  const onboardingToken = readOAuthValue(req.body?.token);
+  const onboardingToken = readGoogleCallbackValue(req.body?.token);
   const input = readGoogleOnboardingInput(req.body as Record<string, unknown>);
   if (!onboardingToken || !input) {
     res.status(400).json({ error: 'Name, organisation, phone number, and account role are required.' });
     return;
   }
   const onboarding = await OAuthOnboardingModel.findOneAndUpdate(
-    { tokenHash: hashOAuthLoginToken(onboardingToken), usedAt: null, expiresAt: { $gt: new Date() } },
+    { tokenHash: deriveGoogleFlowKey(onboardingToken), usedAt: null, expiresAt: { $gt: new Date() } },
     { $set: { usedAt: new Date() } },
     { new: true }
   );
@@ -546,7 +559,7 @@ export async function resetPassword(req: Request, res: Response): Promise<void> 
 
 /** POST /api/auth/logout — revoke the current server-side session immediately. */
 export async function logout(req: Request, res: Response): Promise<void> {
-  const token = req.header('authorization')?.match(/^Bearer\s+(.+)$/i)?.[1];
+  const token = readBearerToken(req.header('authorization'));
   const session = token ? readSessionToken(token) : null;
   if (session) {
     await SessionModel.updateOne(
