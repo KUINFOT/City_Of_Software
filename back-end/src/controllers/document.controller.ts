@@ -1,4 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
+import { Types } from 'mongoose';
 import { DocumentModel } from '../models/Document';
 import { TorModel } from '../models/Tor';
 import { extractText } from '../services/documentAI.service';
@@ -274,6 +275,10 @@ export async function getDocument(
   next: NextFunction
 ): Promise<void> {
   try {
+    if (!Types.ObjectId.isValid(req.params.id)) {
+      res.status(404).json({ error: 'Document not found' });
+      return;
+    }
     const doc = await DocumentModel.findById(req.params.id);
     if (!doc) {
       res.status(404).json({ error: 'Document not found' });
@@ -311,6 +316,10 @@ export async function getDocumentFile(
   next: NextFunction
 ): Promise<void> {
   try {
+    if (!Types.ObjectId.isValid(req.params.id)) {
+      res.status(404).json({ error: 'Document not found' });
+      return;
+    }
     const doc = await DocumentModel.findById(req.params.id).select('originalName mimeType origin').lean();
     if (!doc) {
       res.status(404).json({ error: 'Document not found' });
@@ -351,6 +360,10 @@ export async function summarizeDocument(
   next: NextFunction
 ): Promise<void> {
   try {
+    if (!Types.ObjectId.isValid(req.params.id)) {
+      res.status(404).json({ error: 'Document not found' });
+      return;
+    }
     const doc = await DocumentModel.findById(req.params.id);
     if (!doc) {
       res.status(404).json({ error: 'Document not found' });

@@ -1,4 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
+import { Types } from 'mongoose';
 import { TorModel } from '../models/Tor';
 import { DocumentModel } from '../models/Document';
 import { AgencyModel } from '../models/Agency';
@@ -69,6 +70,10 @@ export async function listTors(req: Request, res: Response, next: NextFunction):
 /** GET /api/tors/:id — full detail, with per-field confidence and outlier flag. */
 export async function getTor(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
+    if (!Types.ObjectId.isValid(req.params.id)) {
+      res.status(404).json({ error: 'TOR not found' });
+      return;
+    }
     const record = await TorModel.findOne({ _id: req.params.id, status: 'published' }).lean();
     if (!record) {
       // Deliberately the same 404 whether the id doesn't exist or exists but
@@ -162,6 +167,10 @@ export async function getTor(req: Request, res: Response, next: NextFunction): P
  */
 export async function listTorDocuments(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
+    if (!Types.ObjectId.isValid(req.params.id)) {
+      res.status(404).json({ error: 'TOR not found' });
+      return;
+    }
     const tor = await TorModel.findOne({ _id: req.params.id, status: 'published' })
       .select('documentIds')
       .lean();
@@ -207,6 +216,10 @@ export async function listTorDocuments(req: Request, res: Response, next: NextFu
  */
 export async function getQualificationMatch(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
+    if (!Types.ObjectId.isValid(req.params.id)) {
+      res.status(404).json({ error: 'TOR not found' });
+      return;
+    }
     const tor = await TorModel.findOne({ _id: req.params.id, status: 'published' })
       .select('qualifications')
       .lean();
@@ -235,6 +248,10 @@ export async function getQualificationMatch(req: Request, res: Response, next: N
  */
 export async function getMatchReasons(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
+    if (!Types.ObjectId.isValid(req.params.id)) {
+      res.status(404).json({ error: 'TOR not found' });
+      return;
+    }
     const tor = await TorModel.findOne({ _id: req.params.id, status: 'published' })
       .select('title technologies projectType budget.amountThb agencyId agencyName')
       .lean();
